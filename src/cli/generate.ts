@@ -4,12 +4,13 @@ import * as fs from "fs";
 import { Logger } from "../utils/logger.js";
 import { findProjectRoot, getConfigPath } from "../core/project.js";
 import { parseSchemaFile, EntityDef } from "../core/schema-parser.js";
-import { DiffEngine, SchemaState } from "../core/diff-engine.js";
+import { DiffEngine } from "../core/diff-engine.js";
 import { generateMigration } from "../core/migration-generator.js";
 import { writeFile, ensureDir } from "../core/file-manager.js";
 
 interface GenerateOptions {
   name?: string;
+  preview?: boolean;
 }
 
 export function registerGenerate(program: Command): void {

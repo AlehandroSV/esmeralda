@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { registerInit } from "../cli/init.js";
-import { registerGenerate } from "../cli/generate.js";
-import { registerMigrate } from "../cli/migrate.js";
-import { registerMigrateCreate } from "../cli/migrate-create.js";
-import { registerMigrateRollback } from "../cli/migrate-rollback.js";
-import { registerDbPull } from "../cli/db-pull.js";
-import { registerDbPush } from "../cli/db-push.js";
-import { registerSeed } from "../cli/seed.js";
+import { registerInit } from "./cli/init.js";
+import { registerGenerate } from "./cli/generate.js";
+import { registerMigrate } from "./cli/migrate.js";
+import { registerMigrateCreate } from "./cli/migrate-create.js";
+import { registerMigrateRollback } from "./cli/migrate-rollback.js";
+import { registerDbPull } from "./cli/db-pull.js";
+import { registerDbPush } from "./cli/db-push.js";
+import { registerSeed } from "./cli/seed.js";
 
 const program = new Command();
 

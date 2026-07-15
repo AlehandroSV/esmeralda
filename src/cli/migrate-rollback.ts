@@ -9,7 +9,7 @@ import { promisify } from "util";
 const exec = promisify(execFile);
 
 interface RollbackOptions {
-  steps?: number;
+  steps?: string;
 }
 
 export function registerMigrateRollback(program: Command): void {
