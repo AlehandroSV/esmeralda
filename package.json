@@ -6,6 +6,11 @@
   "bin": {
     "esmeralda": "dist/bin/esmeralda.js"
   },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
@@ -21,9 +26,19 @@
     "database",
     "cli",
     "migrations",
-    "postgresql"
+    "postgresql",
+    "esmeralda"
   ],
-  "author": "",
+  "author": "AlehandroSV",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AlehandroSV/Jade.git",
+    "directory": "esmerald"
+  },
+  "homepage": "https://github.com/AlehandroSV/Jade",
+  "bugs": {
+    "url": "https://github.com/AlehandroSV/Jade/issues"
+  },
   "license": "MIT",
   "dependencies": {
     "commander": "^12.0.0"

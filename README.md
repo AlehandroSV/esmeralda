@@ -10,15 +10,8 @@ Esmeralda é a CLI oficial do Jade ORM. Gerencia projetos, migrations, schemas e
 
 ## Instalação
 
-> **Status:** Em desenvolvimento. Ainda não disponível no npm.
-
-Para usar localmente:
-
 ```bash
-git clone https://github.com/AlehandroSV/Jade.git
-cd Jade/esmerald
-npm install
-npm link
+npm install -g esmeralda
 ```
 
 ## Comandos
@@ -97,7 +90,7 @@ esmeralda db push --force
 
 ### seed
 
-Roda arquivos de seed.
+Rodar arquivos de seed.
 
 ```bash
 esmeralda seed                   # Todos os seeds
@@ -149,9 +142,38 @@ npm run build
 npm run dev
 ```
 
+## Publicando no npm
+
+### Via GitHub Actions (Automático)
+
+```bash
+# Atualizar versão
+./scripts/release.sh 0.1.1
+
+# Enviar para o GitHub
+git push origin master --tags
+```
+
+O GitHub Actions irá automaticamente publicar no npm!
+
+### Manualmente
+
+```bash
+npm run build
+npm publish
+```
+
+### Configurando o Token
+
+1. Acesse https://www.npmjs.com/settings/tokens
+2. Gere um novo token (Automation)
+3. Adicione como secret no GitHub:
+   - Vá em Settings > Secrets and variables > Actions
+   - Adicione `NPM_TOKEN`
+
 ## Roadmap
 
-- [ ] Publicação no npm
+- [x] Publicação no npm
 - [ ] Build standalone (.exe via pkg)
 - [ ] Comando `esmeralda db diff`
 - [ ] Comando `esmeralda db seed`
