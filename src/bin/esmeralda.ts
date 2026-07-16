@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { registerInit } from "../cli/init.js";
 import { registerGenerate } from "../cli/generate.js";
 import { registerMigrate } from "../cli/migrate.js";
@@ -9,21 +11,28 @@ import { registerDbPull } from "../cli/db-pull.js";
 import { registerDbPush } from "../cli/db-push.js";
 import { registerSeed } from "../cli/seed.js";
 
+const pkg = JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf-8"));
+
 const program = new Command();
 
 program
   .name("esmeralda")
-  .description("CLI for Jade ORM")
-  .version("0.1.0");
+  .description("CLI for Jade ORM - a modern ORM for Lua")
+  .version(pkg.version, "-v, --version")
+  .addHelpText("after", "\nUse -h or --help for more information.");
 
 registerInit(program);
 registerGenerate(program);
-registerMigrate(program);
-registerMigrateCreate(program);
-registerMigrateRollback(program);
-registerDbPull(program);
-registerDbPush(program);
+const migrate = registerMigrate(program);
+registerMigrateCreate(migrate);
+registerMigrateRollback(migrate);
+const db = program.command("db").description("Database operations");
+registerDbPull(db);
+registerDbPush(db);
 registerSeed(program);
 
-program.parse();
+if (process.argv.includes("-help")) {
+  program.help();
+}
 
+program.parse();
