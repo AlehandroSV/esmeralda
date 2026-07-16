@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-[![Português](https://img.shields.io/badge/Português-readme-blue)](#pt-br)
+[![Portugues](https://img.shields.io/badge/Portugu%C3%AAs-readme-blue)](#pt-br)
 [![English](https://img.shields.io/badge/English-readme-green)](#en)
 
 ---
@@ -164,22 +164,6 @@ esmeralda seed           # Runs inside container
 esmeralda migrate        # Runs locally (requires Lua/LuaJIT)
 ```
 
-### Development
-
-```bash
-# Install dependencies
-npm install
-
-# Run tests
-npm test
-
-# Build
-npm run build
-
-# Development
-npm run dev
-```
-
 ### License
 
 MIT
@@ -190,9 +174,9 @@ MIT
 
 ### Sobre
 
-Esmeralda é a CLI oficial do Jade ORM. Gerencia projetos, migrations, schemas e seeds de forma simples e intuitiva.
+Esmeralda e a CLI oficial do Jade ORM. Gerencia projetos, migrations, schemas e seeds de forma simples e intuitiva.
 
-### Instalação
+### Instalacao
 
 ```bash
 npm install -g @alehandrosv/esmeralda-cli
@@ -202,7 +186,7 @@ npm install -g @alehandrosv/esmeralda-cli
 
 #### init
 
-Cria a estrutura básica de um projeto Jade.
+Cria a estrutura basica de um projeto Jade.
 
 ```bash
 esmeralda init -n my-app
@@ -222,7 +206,7 @@ my-app/
 
 #### generate
 
-Gera uma migration a partir das alterações no schema.
+Gera uma migration a partir das alteracoes no schema.
 
 ```bash
 esmeralda generate -n create_users
@@ -246,7 +230,7 @@ Mostra o status de todas as migrations (aplicadas vs pendentes).
 esmeralda migrate status
 ```
 
-Saída:
+Saida:
 ```
 Migration Status:
 
@@ -270,8 +254,8 @@ esmeralda migrate create add_email_to_users
 Desfaz migrations.
 
 ```bash
-esmeralda migrate rollback              # Desfaz última
-esmeralda migrate rollback --steps 3    # Desfaz últimas 3
+esmeralda migrate rollback              # Desfaz ultima
+esmeralda migrate rollback --steps 3    # Desfaz ultimas 3
 ```
 
 #### db pull
@@ -280,13 +264,13 @@ Introspeciona o banco de dados e gera arquivos de entidade.
 
 ```bash
 esmeralda db pull                # Todas as tabelas
-esmeralda db pull -t users       # Tabela específica
+esmeralda db pull -t users       # Tabela especifica
 ```
 
 Os arquivos gerados incluem:
 - Tipos de coluna e modificadores
-- Detecção de primary key
-- Relações de foreign key (como comentários)
+- Deteccao de primary key
+- Relacoes de foreign key (como comentarios)
 
 #### db push
 
@@ -296,7 +280,7 @@ Empurra o schema diretamente para o banco (sem migrations).
 esmeralda db push --force
 ```
 
-Isso irá:
+Isso ira:
 - Criar tabelas com `CREATE TABLE IF NOT EXISTS`
 - Adicionar constraints de foreign key
 
@@ -306,12 +290,12 @@ Roda arquivos de seed.
 
 ```bash
 esmeralda seed                   # Todos os seeds
-esmeralda seed user              # Seed específico
+esmeralda seed user              # Seed especifico
 ```
 
 ### Tratamento de Erros
 
-Todos os comandos fornecem mensagens de erro claras com sugestões:
+Todos os comandos fornecem mensagens de erro claras com sugestoes:
 
 ```
 [error] Not a Jade project. Run 'esmeralda init' first.
@@ -341,22 +325,6 @@ esmeralda seed           # Roda dentro do container
 esmeralda migrate        # Roda localmente (requer Lua/LuaJIT)
 ```
 
-### Desenvolvimento
-
-```bash
-# Instalar dependências
-npm install
-
-# Rodar testes
-npm test
-
-# Build
-npm run build
-
-# Desenvolvimento
-npm run dev
-```
-
-### Licença
+### Licenca
 
 MIT
