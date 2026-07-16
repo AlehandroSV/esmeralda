@@ -1,6 +1,6 @@
 {
   "name": "@alehandrosv/esmeralda-cli",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "CLI for Jade ORM - a modern ORM for Lua",
   "main": "dist/index.js",
   "bin": {
