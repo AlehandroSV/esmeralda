@@ -1,4 +1,4 @@
-name: Release to GitHub Packages
+name: Release
 
 on:
   push:
@@ -19,13 +19,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          registry-url: https://npm.pkg.github.com
-          scope: "@AlehandroSV"
 
       - run: npm ci
 
       - run: npm run build
 
-      - run: npm publish
+      - name: Publish to GitHub Packages
+        run: npm publish --registry https://npm.pkg.github.com
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to npmjs.com
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
