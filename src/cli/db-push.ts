@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import * as fs from "fs";
 import * as path from "path";
-import { Logger } from "../utils/logger.js";
+import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { parseSchemaFile } from "../core/schema-parser.js";
 import { execFile } from "child_process";
@@ -19,43 +19,41 @@ export function registerDbPush(db: Command): void {
     .description("Push schema directly to database (skip migrations)")
     .option("--force", "Skip confirmation")
     .action(async (options: DbPushOptions) => {
-      const projectRoot = findProjectRoot();
-      if (!projectRoot) {
-        Logger.error("Not a Jade project. Run 'esmeralda init' first.");
-        process.exit(1);
-      }
-
-      const schemaDir = path.join(projectRoot, "schema");
-      if (!fs.existsSync(schemaDir)) {
-        Logger.error("Schema directory not found.");
-        return;
-      }
-
-      // Parse schema files
-      const files = fs.readdirSync(schemaDir).filter(f => f.endsWith(".lua") && f !== "init.lua");
-      const entities = [];
-
-      for (const file of files) {
-        const content = fs.readFileSync(path.join(schemaDir, file), "utf-8");
-        const parsed = parseSchemaFile(content);
-        entities.push(...parsed);
-      }
-
-      if (entities.length === 0) {
-        Logger.warn("No entities found in schema/");
-        return;
-      }
-
-      Logger.info(`Found ${entities.length} entities`);
-      Logger.info("Pushing schema to database...");
-
-      if (!options.force) {
-        Logger.warn("This will modify your database schema directly.");
-        Logger.info("Use --force to skip this confirmation.");
-        return;
-      }
-
       try {
+        const projectRoot = findProjectRoot();
+        if (!projectRoot) {
+          throw AppError.notInitialized();
+        }
+
+        const schemaDir = path.join(projectRoot, "schema");
+        if (!fs.existsSync(schemaDir)) {
+          throw AppError.schemaDirNotFound();
+        }
+
+        // Parse schema files
+        const files = fs.readdirSync(schemaDir).filter(f => f.endsWith(".lua") && f !== "init.lua");
+        const entities = [];
+
+        for (const file of files) {
+          const content = fs.readFileSync(path.join(schemaDir, file), "utf-8");
+          const parsed = parseSchemaFile(content);
+          entities.push(...parsed);
+        }
+
+        if (entities.length === 0) {
+          Logger.warn("No entities found in schema/");
+          return;
+        }
+
+        Logger.info(`Found ${entities.length} entities`);
+        Logger.info("Pushing schema to database...");
+
+        if (!options.force) {
+          Logger.warn("This will modify your database schema directly.");
+          Logger.info("Use --force to skip this confirmation.");
+          return;
+        }
+
         // Generate and execute SQL
         const sqlStatements = generateSchemaSQL(entities);
 
@@ -74,8 +72,18 @@ export function registerDbPush(db: Command): void {
 
         Logger.success("Schema pushed to database!");
       } catch (error: any) {
-        Logger.error("Failed to push schema:");
-        Logger.error(error.message);
+        if (error instanceof AppError) {
+          Logger.error(error.message);
+          if (error.suggestion) {
+            Logger.info(`Suggestion: ${error.suggestion}`);
+          }
+        } else {
+          Logger.error("Failed to push schema:");
+          Logger.error(error.message);
+        }
+        if (process.env.DEBUG) {
+          console.error(error.stack);
+        }
         process.exit(1);
       }
     });

@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import * as path from "path";
-import { Logger } from "../utils/logger.js";
+import { Logger, AppError } from "../utils/logger.js";
 import { ensureDir, writeFile, fileExists } from "../core/file-manager.js";
 
 interface InitOptions {
@@ -60,37 +60,46 @@ export function registerInit(program: Command): void {
     .description("Initialize Jade in current directory or scaffold a new project")
     .option("-n, --name <name>", "Project name (creates a new directory)")
     .action(async (options: InitOptions) => {
-      if (options.name) {
-        // Mode 1: Create a new project directory
-        const projectPath = path.resolve(process.cwd(), options.name);
+      try {
+        if (options.name) {
+          // Mode 1: Create a new project directory
+          const projectPath = path.resolve(process.cwd(), options.name);
 
-        if (fileExists(projectPath)) {
-          Logger.error(`Directory "${options.name}" already exists.`);
-          Logger.info("Use `esmeralda init` inside it to initialize Jade.");
-          return;
+          if (fileExists(projectPath)) {
+            Logger.error(`Directory "${options.name}" already exists.`);
+            Logger.info("Use `esmeralda init` inside it to initialize Jade.");
+            return;
+          }
+
+          ensureDir(projectPath);
+          initInDirectory(projectPath, options.name);
+
+          Logger.success(`Project "${options.name}" created successfully!`);
+          Logger.info("Next steps:");
+          Logger.info(`  cd ${options.name}`);
+          Logger.info("  Add your entities in schema/");
+        } else {
+          // Mode 2: Initialize Jade in the current directory
+          const cwd = process.cwd();
+          const dirName = path.basename(cwd);
+
+          if (fileExists(path.join(cwd, "jade.config.lua"))) {
+            Logger.warn("Jade is already initialized in this directory.");
+            return;
+          }
+
+          initInDirectory(cwd, dirName);
+
+          Logger.success("Jade initialized successfully!");
+          Logger.info("Add your entities in schema/");
         }
-
-        ensureDir(projectPath);
-        initInDirectory(projectPath, options.name);
-
-        Logger.success(`Project "${options.name}" created successfully!`);
-        Logger.info("Next steps:");
-        Logger.info(`  cd ${options.name}`);
-        Logger.info("  Add your entities in schema/");
-      } else {
-        // Mode 2: Initialize Jade in the current directory
-        const cwd = process.cwd();
-        const dirName = path.basename(cwd);
-
-        if (fileExists(path.join(cwd, "jade.config.lua"))) {
-          Logger.warn("Jade is already initialized in this directory.");
-          return;
+      } catch (error: any) {
+        Logger.error("Failed to initialize Jade:");
+        Logger.error(error.message);
+        if (process.env.DEBUG) {
+          console.error(error.stack);
         }
-
-        initInDirectory(cwd, dirName);
-
-        Logger.success("Jade initialized successfully!");
-        Logger.info("Add your entities in schema/");
+        process.exit(1);
       }
     });
 }

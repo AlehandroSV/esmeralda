@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import * as fs from "fs";
 import * as path from "path";
-import { Logger } from "../utils/logger.js";
+import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { execFile } from "child_process";
 import { promisify } from "util";
@@ -51,61 +51,60 @@ export function registerMigrate(program: Command): Command {
     .description("Run pending migrations")
     .option("--preview", "Show SQL without executing")
     .action(async (options: MigrateOptions) => {
-      const projectRoot = findProjectRoot();
-      if (!projectRoot) {
-        Logger.error("Not a Jade project. Run 'esmeralda init' first.");
-        process.exit(1);
-      }
-
-      const migrationsDir = path.join(projectRoot, "migrations");
-      if (!fs.existsSync(migrationsDir)) {
-        Logger.error("Migrations directory not found.");
-        process.exit(1);
-      }
-
-      // List migration files
-      const files = fs.readdirSync(migrationsDir)
-        .filter(f => f.endsWith(".lua") && !f.startsWith("_"))
-        .sort();
-
-      if (files.length === 0) {
-        Logger.warn("No migrations found.");
-        return;
-      }
-
-      const useDocker = hasDockerCompose(projectRoot);
-      if (useDocker) {
-        Logger.info("Using Docker to run migrations");
-      }
-
-      Logger.info(`Found ${files.length} migration(s)`);
-      Logger.info("Running migrations...");
-
-      // Execute each migration
-      for (const file of files) {
-        Logger.info(`  Applying: ${file}`);
-
-        if (options.preview) {
-          Logger.info(`    [preview] Would execute migration`);
-          continue;
+      try {
+        const projectRoot = findProjectRoot();
+        if (!projectRoot) {
+          throw AppError.notInitialized();
         }
 
-        try {
-          let configPath: string;
-          let migrationPath: string;
+        const migrationsDir = path.join(projectRoot, "migrations");
+        if (!fs.existsSync(migrationsDir)) {
+          throw AppError.migrationsDirNotFound();
+        }
 
-          if (useDocker) {
-            // Convert Windows paths to Docker container paths (/app/...)
-            const relativeConfig = path.relative(projectRoot, path.join(projectRoot, "jade.config.lua")).replace(/\\/g, "/");
-            const relativeMigration = path.relative(projectRoot, path.join(migrationsDir, file)).replace(/\\/g, "/");
-            configPath = "/app/" + relativeConfig;
-            migrationPath = "/app/" + relativeMigration;
-          } else {
-            configPath = path.join(projectRoot, "jade.config.lua").replace(/\\/g, "\\\\");
-            migrationPath = path.join(migrationsDir, file).replace(/\\/g, "\\\\");
+        // List migration files
+        const files = fs.readdirSync(migrationsDir)
+          .filter(f => f.endsWith(".lua") && !f.startsWith("_"))
+          .sort();
+
+        if (files.length === 0) {
+          Logger.warn("No migrations found.");
+          return;
+        }
+
+        const useDocker = hasDockerCompose(projectRoot);
+        if (useDocker) {
+          Logger.info("Using Docker to run migrations");
+        }
+
+        Logger.info(`Found ${files.length} migration(s)`);
+        Logger.info("Running migrations...");
+
+        // Execute each migration
+        for (const file of files) {
+          Logger.info(`  Applying: ${file}`);
+
+          if (options.preview) {
+            Logger.info(`    [preview] Would execute migration`);
+            continue;
           }
 
-          const script = `
+          try {
+            let configPath: string;
+            let migrationPath: string;
+
+            if (useDocker) {
+              // Convert Windows paths to Docker container paths (/app/...)
+              const relativeConfig = path.relative(projectRoot, path.join(projectRoot, "jade.config.lua")).replace(/\\/g, "/");
+              const relativeMigration = path.relative(projectRoot, path.join(migrationsDir, file)).replace(/\\/g, "/");
+              configPath = "/app/" + relativeConfig;
+              migrationPath = "/app/" + relativeMigration;
+            } else {
+              configPath = path.join(projectRoot, "jade.config.lua").replace(/\\/g, "\\\\");
+              migrationPath = path.join(migrationsDir, file).replace(/\\/g, "\\\\");
+            }
+
+            const script = `
 local jade = require("jade")
 local config = dofile("${configPath}")
 jade.configure(config)
@@ -115,23 +114,36 @@ migration.up()
 local tracker = require("jade.migration.tracker")
 tracker.recordMigration(jade.driver(), "${file}")
 print("  OK: ${file}")
-          `;
+            `;
 
-          if (useDocker) {
-            await runInDocker(script, projectRoot);
-          } else {
-            await runLocal(script);
+            if (useDocker) {
+              await runInDocker(script, projectRoot);
+            } else {
+              await runLocal(script);
+            }
+
+            Logger.success(`  Applied: ${file}`);
+          } catch (error: any) {
+            throw AppError.migrationFailed(file, error);
           }
-
-          Logger.success(`  Applied: ${file}`);
-        } catch (error: any) {
-          Logger.error(`  Failed: ${file}`);
-          Logger.error(error.message);
-          process.exit(1);
         }
-      }
 
-      Logger.success("All migrations applied!");
+        Logger.success("All migrations applied!");
+      } catch (error: any) {
+        if (error instanceof AppError) {
+          Logger.error(error.message);
+          if (error.suggestion) {
+            Logger.info(`Suggestion: ${error.suggestion}`);
+          }
+        } else {
+          Logger.error("Migration failed:");
+          Logger.error(error.message);
+        }
+        if (process.env.DEBUG) {
+          console.error(error.stack);
+        }
+        process.exit(1);
+      }
     });
 
   // Status command
@@ -139,26 +151,24 @@ print("  OK: ${file}")
     .command("status")
     .description("Show migration status")
     .action(async () => {
-      const projectRoot = findProjectRoot();
-      if (!projectRoot) {
-        Logger.error("Not a Jade project. Run 'esmeralda init' first.");
-        process.exit(1);
-      }
-
-      const migrationsDir = path.join(projectRoot, "migrations");
-      if (!fs.existsSync(migrationsDir)) {
-        Logger.error("Migrations directory not found.");
-        process.exit(1);
-      }
-
-      // List migration files
-      const files = fs.readdirSync(migrationsDir)
-        .filter(f => f.endsWith(".lua") && !f.startsWith("_"))
-        .sort();
-
-      const useDocker = hasDockerCompose(projectRoot);
-
       try {
+        const projectRoot = findProjectRoot();
+        if (!projectRoot) {
+          throw AppError.notInitialized();
+        }
+
+        const migrationsDir = path.join(projectRoot, "migrations");
+        if (!fs.existsSync(migrationsDir)) {
+          throw AppError.migrationsDirNotFound();
+        }
+
+        // List migration files
+        const files = fs.readdirSync(migrationsDir)
+          .filter(f => f.endsWith(".lua") && !f.startsWith("_"))
+          .sort();
+
+        const useDocker = hasDockerCompose(projectRoot);
+
         // Get applied migrations from tracker
         let configPath: string;
         if (useDocker) {
@@ -210,8 +220,18 @@ print(require("dkjson").encode(result))
         Logger.info("");
         Logger.info(`Applied: ${applied.length}, Pending: ${pending.length}`);
       } catch (error: any) {
-        Logger.error("Failed to get migration status:");
-        Logger.error(error.message);
+        if (error instanceof AppError) {
+          Logger.error(error.message);
+          if (error.suggestion) {
+            Logger.info(`Suggestion: ${error.suggestion}`);
+          }
+        } else {
+          Logger.error("Failed to get migration status:");
+          Logger.error(error.message);
+        }
+        if (process.env.DEBUG) {
+          console.error(error.stack);
+        }
         process.exit(1);
       }
     });

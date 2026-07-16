@@ -1,19 +1,12 @@
 import { Command } from "commander";
 import * as fs from "fs";
 import * as path from "path";
-import { Logger } from "../utils/logger.js";
+import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { execFile } from "child_process";
 import { promisify } from "util";
 
 const exec = promisify(execFile);
-
-interface ForeignKey {
-  constraint_name: string;
-  column_name: string;
-  foreign_table_name: string;
-  foreign_column_name: string;
-}
 
 export function registerDbPull(db: Command): void {
   db
@@ -21,15 +14,14 @@ export function registerDbPull(db: Command): void {
     .description("Introspect database and generate entity files")
     .option("-t, --table <name>", "Introspect specific table only")
     .action(async (options: { table?: string }) => {
-      const projectRoot = findProjectRoot();
-      if (!projectRoot) {
-        Logger.error("Not a Jade project. Run 'esmeralda init' first.");
-        process.exit(1);
-      }
-
-      Logger.info("Introspecting database...");
-
       try {
+        const projectRoot = findProjectRoot();
+        if (!projectRoot) {
+          throw AppError.notInitialized();
+        }
+
+        Logger.info("Introspecting database...");
+
         const script = `
           local jade = require("jade")
           local config = dofile("${path.join(projectRoot, "jade.config.lua").replace(/\\/g, "\\\\")}")
@@ -93,7 +85,7 @@ export function registerDbPull(db: Command): void {
             print(require("dkjson").encode(fks))
           `;
 
-          let foreignKeys: ForeignKey[] = [];
+          let foreignKeys: any[] = [];
           try {
             const { stdout: fkOutput } = await exec("lua", ["-e", fkScript]);
             foreignKeys = JSON.parse(fkOutput.trim());
@@ -112,14 +104,24 @@ export function registerDbPull(db: Command): void {
 
         Logger.success("Entity files generated in schema/");
       } catch (error: any) {
-        Logger.error("Failed to introspect database:");
-        Logger.error(error.message);
+        if (error instanceof AppError) {
+          Logger.error(error.message);
+          if (error.suggestion) {
+            Logger.info(`Suggestion: ${error.suggestion}`);
+          }
+        } else {
+          Logger.error("Failed to introspect database:");
+          Logger.error(error.message);
+        }
+        if (process.env.DEBUG) {
+          console.error(error.stack);
+        }
         process.exit(1);
       }
     });
 }
 
-function generateEntityLua(entityName: string, tableName: string, columns: any[], foreignKeys: ForeignKey[]): string {
+function generateEntityLua(entityName: string, tableName: string, columns: any[], foreignKeys: any[]): string {
   const lines: string[] = [];
 
   lines.push(`local Jade = require("jade")`);

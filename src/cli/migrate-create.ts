@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import * as fs from "fs";
 import * as path from "path";
-import { Logger } from "../utils/logger.js";
+import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { writeFile, ensureDir } from "../core/file-manager.js";
 
@@ -15,26 +15,24 @@ export function registerMigrateCreate(migrate: Command): void {
     .description("Create a new empty migration file")
     .argument("[name]", "Migration name")
     .action(async (name?: string) => {
-      if (!name) {
-        Logger.error("Please provide a migration name.");
-        Logger.info("Usage: esmeralda migrate create <name>");
-        process.exit(1);
-      }
+      try {
+        if (!name) {
+          throw AppError.migrationNameRequired();
+        }
 
-      const projectRoot = findProjectRoot();
-      if (!projectRoot) {
-        Logger.error("Not a Jade project. Run 'esmeralda init' first.");
-        process.exit(1);
-      }
+        const projectRoot = findProjectRoot();
+        if (!projectRoot) {
+          throw AppError.notInitialized();
+        }
 
-      const migrationsDir = path.join(projectRoot, "migrations");
-      ensureDir(migrationsDir);
+        const migrationsDir = path.join(projectRoot, "migrations");
+        ensureDir(migrationsDir);
 
-      const timestamp = Date.now();
-      const filename = `${timestamp}_${name}.lua`;
-      const filePath = path.join(migrationsDir, filename);
+        const timestamp = Date.now();
+        const filename = `${timestamp}_${name}.lua`;
+        const filePath = path.join(migrationsDir, filename);
 
-      const content = `-- Migration: ${name}
+        const content = `-- Migration: ${name}
 -- Created by Esmeralda
 -- ${new Date().toISOString()}
 
@@ -53,9 +51,24 @@ end
 return M
 `;
 
-      writeFile(filePath, content);
+        writeFile(filePath, content);
 
-      Logger.success(`Migration created: ${filename}`);
-      Logger.info(`Edit: ${filePath}`);
+        Logger.success(`Migration created: ${filename}`);
+        Logger.info(`Edit: ${filePath}`);
+      } catch (error: any) {
+        if (error instanceof AppError) {
+          Logger.error(error.message);
+          if (error.suggestion) {
+            Logger.info(`Suggestion: ${error.suggestion}`);
+          }
+        } else {
+          Logger.error("Failed to create migration:");
+          Logger.error(error.message);
+        }
+        if (process.env.DEBUG) {
+          console.error(error.stack);
+        }
+        process.exit(1);
+      }
     });
 }
