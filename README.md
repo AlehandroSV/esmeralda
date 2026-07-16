@@ -142,35 +142,6 @@ npm run build
 npm run dev
 ```
 
-## Publicando no npm
-
-### Via GitHub Actions (Automático)
-
-```bash
-# Atualizar versão
-./scripts/release.sh 0.1.1
-
-# Enviar para o GitHub
-git push origin master --tags
-```
-
-O GitHub Actions irá automaticamente publicar no npm!
-
-### Manualmente
-
-```bash
-npm run build
-npm publish
-```
-
-### Configurando o Token
-
-1. Acesse https://www.npmjs.com/settings/tokens
-2. Gere um novo token (Automation)
-3. Adicione como secret no GitHub:
-   - Vá em Settings > Secrets and variables > Actions
-   - Adicione `NPM_TOKEN`
-
 ## Roadmap
 
 - [x] Publicação no npm
