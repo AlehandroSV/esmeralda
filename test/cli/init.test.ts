@@ -164,7 +164,7 @@ describe("generateConfigContent", () => {
       port: 3306,
       database: "mydb",
       user: "root",
-      password: "secret",
+      password: "test_password_abc",
     };
 
     const content = generateConfigContent("mydb", config);
@@ -174,7 +174,7 @@ describe("generateConfigContent", () => {
     expect(content).toContain("port = 3306");
     expect(content).toContain('database = "mydb"');
     expect(content).toContain('user = "root"');
-    expect(content).toContain('password = "secret"');
+    expect(content).toContain('password = "test_password_abc"');
   });
 
   it("generates config with postgresql defaults", () => {
@@ -233,7 +233,7 @@ describe("initInDirectory with config", () => {
       port: 3306,
       database: "production",
       user: "admin",
-      password: "p@ssw0rd",
+      password: "test_password_xyz",
     };
 
     initInDirectory(projectPath, "myproject", config);
@@ -243,7 +243,7 @@ describe("initInDirectory with config", () => {
     expect(content).toContain('host = "db.example.com"');
     expect(content).toContain('database = "production"');
     expect(content).toContain('user = "admin"');
-    expect(content).toContain('password = "p@ssw0rd"');
+    expect(content).toContain('password = "test_password_xyz"');
   });
 
   it("uses defaults when no config provided", () => {
