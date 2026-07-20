@@ -13,6 +13,10 @@
   ],
   "scripts": {
     "build": "tsc",
+    "build:standalone": "npm run build && pkg dist/bin/esmeralda.js --targets node18-win-x64,node18-linux-x64,node18-macos-x64 --output dist/esmeralda",
+    "build:standalone:win": "npm run build && pkg dist/bin/esmeralda.js --targets node18-win-x64 --output dist/esmeralda.exe",
+    "build:standalone:linux": "npm run build && pkg dist/bin/esmeralda.js --targets node18-linux-x64 --output dist/esmeralda-linux",
+    "build:standalone:mac": "npm run build && pkg dist/bin/esmeralda.js --targets node18-macos-x64 --output dist/esmeralda-mac",
     "dev": "tsx src/index.ts",
     "test": "vitest",
     "test:run": "vitest run",
@@ -45,11 +49,18 @@
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "@yao-pkg/pkg": "^6.21.0",
     "tsx": "^4.0.0",
     "typescript": "^5.4.0",
     "vitest": "^4.1.10"
   },
   "engines": {
     "node": ">=18"
+  },
+  "pkg": {
+    "scripts": ["dist/**/*.js"],
+    "assets": [],
+    "targets": ["node18"],
+    "outputPath": "dist"
   }
 }
