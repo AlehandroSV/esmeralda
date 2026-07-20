@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { initInDirectory } from "../../src/cli/init.js";
+import { initInDirectory, generateConfigContent, DatabaseConfig } from "../../src/cli/init.js";
 
 // We need to test the init command by running it
 // Since it's a CLI command, we'll test the underlying functions
@@ -153,5 +153,111 @@ return jade
     expect(fs.existsSync(path.join(projectPath, "schema", "init.lua"))).toBe(true);
     const content = fs.readFileSync(path.join(projectPath, "schema", "init.lua"), "utf-8");
     expect(content).toContain("return {}");
+  });
+});
+
+describe("generateConfigContent", () => {
+  it("generates config with provided values", () => {
+    const config: DatabaseConfig = {
+      driver: "mysql",
+      host: "127.0.0.1",
+      port: 3306,
+      database: "mydb",
+      user: "root",
+      password: "test_password_abc",
+    };
+
+    const content = generateConfigContent("mydb", config);
+
+    expect(content).toContain('driver = "mysql"');
+    expect(content).toContain('host = "127.0.0.1"');
+    expect(content).toContain("port = 3306");
+    expect(content).toContain('database = "mydb"');
+    expect(content).toContain('user = "root"');
+    expect(content).toContain('password = "test_password_abc"');
+  });
+
+  it("generates config with postgresql defaults", () => {
+    const config: DatabaseConfig = {
+      driver: "postgresql",
+      host: "localhost",
+      port: 5432,
+      database: "testdb",
+      user: "postgres",
+      password: "",
+    };
+
+    const content = generateConfigContent("testdb", config);
+
+    expect(content).toContain('driver = "postgresql"');
+    expect(content).toContain("port = 5432");
+    expect(content).toContain('user = "postgres"');
+    expect(content).toContain('password = ""');
+  });
+
+  it("generates config with sqlite", () => {
+    const config: DatabaseConfig = {
+      driver: "sqlite",
+      host: "",
+      port: 0,
+      database: "local.db",
+      user: "",
+      password: "",
+    };
+
+    const content = generateConfigContent("local.db", config);
+
+    expect(content).toContain('driver = "sqlite"');
+    expect(content).toContain('database = "local.db"');
+  });
+});
+
+describe("initInDirectory with config", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "esmeralda-test-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("uses provided config for jade.config.lua", () => {
+    const projectPath = path.join(tmpDir, "myproject");
+    fs.mkdirSync(projectPath, { recursive: true });
+
+    const config: DatabaseConfig = {
+      driver: "mysql",
+      host: "db.example.com",
+      port: 3306,
+      database: "production",
+      user: "admin",
+      password: "test_password_xyz",
+    };
+
+    initInDirectory(projectPath, "myproject", config);
+
+    const content = fs.readFileSync(path.join(projectPath, "jade.config.lua"), "utf-8");
+    expect(content).toContain('driver = "mysql"');
+    expect(content).toContain('host = "db.example.com"');
+    expect(content).toContain('database = "production"');
+    expect(content).toContain('user = "admin"');
+    expect(content).toContain('password = "test_password_xyz"');
+  });
+
+  it("uses defaults when no config provided", () => {
+    const projectPath = path.join(tmpDir, "myproject");
+    fs.mkdirSync(projectPath, { recursive: true });
+
+    initInDirectory(projectPath, "myproject");
+
+    const content = fs.readFileSync(path.join(projectPath, "jade.config.lua"), "utf-8");
+    expect(content).toContain('driver = "postgresql"');
+    expect(content).toContain('host = "localhost"');
+    expect(content).toContain("port = 5432");
+    expect(content).toContain('database = "myproject"');
+    expect(content).toContain('user = "postgres"');
+    expect(content).toContain('password = ""');
   });
 });
