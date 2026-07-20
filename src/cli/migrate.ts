@@ -17,7 +17,7 @@ function hasDockerCompose(projectRoot: string): boolean {
          fs.existsSync(path.join(projectRoot, "docker-compose.yaml"));
 }
 
-async function runInDocker(script: string, projectRoot: string): Promise<void> {
+async function runInDocker(script: string, projectRoot: string): Promise<{ stdout: string }> {
   // Find the api service name from docker-compose.yml
   const composeFile = fs.existsSync(path.join(projectRoot, "docker-compose.yml"))
     ? "docker-compose.yml" : "docker-compose.yaml";
@@ -30,7 +30,7 @@ async function runInDocker(script: string, projectRoot: string): Promise<void> {
   // Escape the script for shell
   const escapedScript = script.replace(/"/g, '\\"').replace(/\n/g, " ");
 
-  await exec("docker", [
+  return await exec("docker", [
     "compose", "exec", "-T", serviceName,
     "luajit", "-e", script
   ], { cwd: projectRoot });
