@@ -11,6 +11,7 @@ import { registerDbPull } from "./cli/db-pull.js";
 import { registerDbPush } from "./cli/db-push.js";
 import { registerSeed } from "./cli/seed.js";
 import { registerSchemaGenerate, registerSchemaDiff } from "./cli/schema-generate.js";
+import { registerDbSync } from "./cli/db-sync.js";
 
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
 
@@ -32,6 +33,7 @@ registerDbPull(db);
 registerDbPush(db);
 registerSchemaDiff(db);
 registerSeed(db);
+registerDbSync(db);
 registerSchemaGenerate(program);
 
 if (process.argv.includes("-help")) {
