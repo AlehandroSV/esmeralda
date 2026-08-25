@@ -109,7 +109,7 @@ function parseColumns(block: string): ColumnDef[] {
   return columns;
 }
 
-function mapType(typeName: string): string {
+export function mapType(typeName: string): string {
   const typeMap: Record<string, string> = {
     "String": "VARCHAR",
     "Text": "TEXT",
