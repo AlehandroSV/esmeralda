@@ -42,14 +42,14 @@ export class LuaBridge {
    * Pass user-controlled values via `args` — they are serialized as JSON into an ARGS global,
    * never interpolated into the code string.
    */
-  async executeSafe(code: string, args: Record<string, any> = {}): Promise<string> {
+  async executeSafe(code: string, args: Record<string, any> = {}): Promise<{ stdout: string; stderr: string }> {
     const tmpFile = path.join(os.tmpdir(), `jade_lua_${Date.now()}_${Math.random().toString(36).slice(2)}.lua`);
     try {
       const argsLua = `ARGS = ${JSON.stringify(args)}`;
       const fullCode = argsLua + "\n" + code;
       fs.writeFileSync(tmpFile, fullCode, "utf-8");
-      const { stdout } = await exec(this.luaPath, [tmpFile]);
-      return stdout.trim();
+      const { stdout, stderr } = await exec(this.luaPath, [tmpFile]);
+      return { stdout: stdout.trim(), stderr: stderr?.trim() ?? "" };
     } finally {
       try { fs.unlinkSync(tmpFile); } catch {}
     }
@@ -57,17 +57,19 @@ export class LuaBridge {
 
   /**
    * Execute Lua code safely and parse the result as JSON.
+   * Handles non-JSON output gracefully: tries to extract JSON from stdout,
+   * and throws an informative error if parsing fails.
    */
   async executeSafeJson<T = any>(code: string, args: Record<string, any> = {}): Promise<T> {
-    const stdout = await this.executeSafe(code, args);
-    return JSON.parse(stdout);
+    const { stdout, stderr } = await this.executeSafe(code, args);
+    return this.parseJson<T>(stdout, stderr);
   }
 
   /**
    * Execute Lua code safely inside a Docker container via docker compose exec.
    * Writes code to a local temp file, copies it into the container, and runs it there.
    */
-  async executeSafeDocker(code: string, args: Record<string, any> = {}, projectRoot: string): Promise<string> {
+  async executeSafeDocker(code: string, args: Record<string, any> = {}, projectRoot: string): Promise<{ stdout: string; stderr: string }> {
     const { serviceName, luaBin } = await this.detectDocker(projectRoot);
 
     const tmpFile = path.join(os.tmpdir(), `jade_lua_${Date.now()}_${Math.random().toString(36).slice(2)}.lua`);
@@ -82,12 +84,12 @@ export class LuaBridge {
         "sh", "-c", `cat > ${containerTmp} <<'JADE_LUA_EOF'\n${fullCode}\nJADE_LUA_EOF`
       ], { cwd: projectRoot });
 
-      const { stdout } = await exec("docker", [
+      const { stdout, stderr } = await exec("docker", [
         "compose", "exec", "-T", serviceName,
         luaBin, containerTmp
       ], { cwd: projectRoot });
 
-      return stdout.trim();
+      return { stdout: stdout.trim(), stderr: stderr?.trim() ?? "" };
     } finally {
       try { fs.unlinkSync(tmpFile); } catch {}
       try {
@@ -101,10 +103,35 @@ export class LuaBridge {
 
   /**
    * Execute Lua code safely in Docker and parse the result as JSON.
+   * Handles non-JSON output gracefully.
    */
   async executeSafeDockerJson<T = any>(code: string, args: Record<string, any> = {}, projectRoot: string): Promise<T> {
-    const stdout = await this.executeSafeDocker(code, args, projectRoot);
-    return JSON.parse(stdout);
+    const { stdout, stderr } = await this.executeSafeDocker(code, args, projectRoot);
+    return this.parseJson<T>(stdout, stderr);
+  }
+
+  /**
+   * Parse JSON from Lua output, handling warnings/logs that may precede the JSON.
+   * Throws an informative error if no valid JSON can be extracted.
+   */
+  private parseJson<T>(stdout: string, stderr: string): T {
+    try {
+      return JSON.parse(stdout);
+    } catch {
+      // Try to extract JSON array or object from output (may have warnings/logs before it)
+      const jsonMatch = stdout.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+      if (jsonMatch) {
+        try {
+          return JSON.parse(jsonMatch[1]);
+        } catch {}
+      }
+
+      throw new Error(
+        `Failed to parse Lua output as JSON.\n` +
+        `stdout: ${stdout}\n` +
+        (stderr ? `stderr: ${stderr}\n` : "")
+      );
+    }
   }
 
   /**
