@@ -5,6 +5,7 @@ import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { parseSchemaFile } from "../core/schema-parser.js";
 import { LuaBridge } from "../core/lua-bridge.js";
+import { getConfigPathForEnv, LUA_CONFIG_LOAD } from "../core/config.js";
 
 interface DbPushOptions {
   force?: boolean;
@@ -54,12 +55,12 @@ export function registerDbPush(db: Command): void {
 
         const sqlStatements = generateSchemaSQL(entities);
         const bridge = new LuaBridge();
-        const configPath = path.join(projectRoot, "jade.config.lua");
+        const { configPath, envConfigPath } = getConfigPathForEnv(projectRoot);
 
         const script = `
 local jade = require("jade")
-local config = dofile(ARGS.configPath)
-jade.configure(config)
+${LUA_CONFIG_LOAD}
+jade.configure(_cfg)
 jade.driver():execute(ARGS.sql)
         `;
 
@@ -67,6 +68,7 @@ jade.driver():execute(ARGS.sql)
           Logger.info(`  Executing: ${sql.substring(0, 80)}...`);
           await bridge.executeSafe(script, {
             configPath,
+            envConfigPath,
             sql,
           });
         }

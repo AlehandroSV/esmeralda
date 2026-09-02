@@ -4,6 +4,7 @@ import * as fs from "fs";
 import { Logger } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { LuaBridge } from "../core/lua-bridge.js";
+import { getConfigPathForEnv, LUA_CONFIG_LOAD } from "../core/config.js";
 
 interface SchemaGenerateOptions {
   name?: string;
@@ -58,12 +59,12 @@ return schema
 
         const outputDir = options.output || "schema";
         const bridge = new LuaBridge();
-        const configPath = path.join(projectRoot, "jade.config.lua");
+        const { configPath, envConfigPath } = getConfigPathForEnv(projectRoot);
 
         const script = `
 local jade = require("jade")
-local config = dofile(ARGS.configPath)
-jade.configure(config)
+${LUA_CONFIG_LOAD}
+jade.configure(_cfg)
 local schema_def = dofile(ARGS.schemaDefPath)
 local files = jade.Declarative.toLuaFiles(schema_def)
 local result = {}
@@ -75,6 +76,7 @@ print(require("dkjson").encode(result))
 
         const files: Array<{ filename: string; content: string }> = await bridge.executeSafeJson(script, {
           configPath,
+          envConfigPath,
           schemaDefPath,
         });
 
@@ -115,13 +117,13 @@ function schemaDiffAction(options: SchemaDiffOptions): void {
       Logger.info("Comparing schema with database...");
 
       const bridge = new LuaBridge();
-      const configPath = path.join(projectRoot, "jade.config.lua");
+      const { configPath, envConfigPath } = getConfigPathForEnv(projectRoot);
       const schemaLuaPath = path.join(projectRoot, "schema.lua");
 
       const script = `
 local jade = require("jade")
-local config = dofile(ARGS.configPath)
-jade.configure(config)
+${LUA_CONFIG_LOAD}
+jade.configure(_cfg)
 
 local tables = jade.driver():execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name")
 local current_schema = { models = {} }
@@ -159,6 +161,7 @@ print(require("dkjson").encode(diff))
 
       const diff = await bridge.executeSafeJson(script, {
         configPath,
+        envConfigPath,
         schemaLuaPath,
       });
 
