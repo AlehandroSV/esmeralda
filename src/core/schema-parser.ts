@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import type { IndexDef } from "./diff-engine.js";
 
 export interface ColumnDef {
   name: string;
@@ -18,10 +19,13 @@ export interface ColumnDef {
   nanoidDefault?: boolean;
 }
 
+export { IndexDef } from "./diff-engine.js";
+
 export interface EntityDef {
   name: string;
   tableName: string;
   columns: ColumnDef[];
+  indexes?: IndexDef[];
 }
 
 export interface ValidationError {
@@ -33,15 +37,26 @@ export interface ValidationError {
 export function parseSchemaFile(content: string): EntityDef[] {
   const entities: EntityDef[] = [];
 
-  // Match Jade.Entity("table_name", { ... }) or Entity("table_name", { ... }) patterns
-  const entityRegex = /(?:Jade\.)?Entity\s*\(\s*["'](\w+)["']\s*,\s*\{([\s\S]*?)\}\s*\)/g;
+  // Match Jade.Entity("table_name", { or Entity("table_name", {
+  const entityRegex = /(?:Jade\.)?Entity\s*\(\s*["'](\w+)["']\s*,\s*\{/g;
   let match;
 
   while ((match = entityRegex.exec(content)) !== null) {
     const tableName = match[1];
-    const columnsBlock = match[2];
+    const blockStart = match.index + match[0].length;
 
+    // Find matching closing brace by counting depth
+    let depth = 1;
+    let blockEnd = blockStart;
+    while (blockEnd < content.length && depth > 0) {
+      if (content[blockEnd] === "{") depth++;
+      if (content[blockEnd] === "}") depth--;
+      blockEnd++;
+    }
+
+    const columnsBlock = content.substring(blockStart, blockEnd - 1);
     const columns = parseColumns(columnsBlock);
+    const indexes = parseIndexes(columnsBlock);
 
     // Infer entity name from table name
     const name = tableName.charAt(0).toUpperCase() + tableName.slice(1);
@@ -50,6 +65,7 @@ export function parseSchemaFile(content: string): EntityDef[] {
       name,
       tableName,
       columns,
+      indexes: indexes.length > 0 ? indexes : undefined,
     });
   }
 
@@ -123,6 +139,31 @@ function parseColumns(block: string): ColumnDef[] {
   }
 
   return columns;
+}
+
+function parseIndexes(block: string): IndexDef[] {
+  const indexes: IndexDef[] = [];
+
+  // Match: Jade.Index("name", { "col1", "col2" }, { unique = true })
+  const indexRegex = /(?:Jade\.)?Index\s*\(\s*["']([^"']+)["']\s*,\s*\{([^}]+)\}\s*(?:,\s*\{([^}]*)\})?\s*\)/g;
+  let match;
+
+  while ((match = indexRegex.exec(block)) !== null) {
+    const name = match[1];
+    const columnsStr = match[2];
+    const optionsStr = match[3] || "";
+
+    const columns = columnsStr
+      .split(",")
+      .map(c => c.trim().replace(/["']/g, ""))
+      .filter(c => c.length > 0);
+
+    const unique = optionsStr.includes("unique") && /unique\s*=\s*true/.test(optionsStr);
+
+    indexes.push({ name, columns, unique: unique || undefined });
+  }
+
+  return indexes;
 }
 
 export function mapType(typeName: string): string {

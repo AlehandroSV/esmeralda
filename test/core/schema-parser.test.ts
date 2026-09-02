@@ -67,6 +67,80 @@ describe("Schema Parser", () => {
     expect(columns[1].name).toBe("user_id");
     expect(columns[1].references).toEqual({ table: "users", column: "id" });
   });
+
+  it("parses single-column index", () => {
+    const content = `
+      Jade.Entity("users", {
+          id = Jade.Integer():primaryKey(),
+          email = Jade.String(),
+          Jade.Index("idx_users_email", { "email" }),
+      })
+    `;
+
+    const entities = parseSchemaFile(content);
+    expect(entities[0].indexes).toHaveLength(1);
+    expect(entities[0].indexes![0].name).toBe("idx_users_email");
+    expect(entities[0].indexes![0].columns).toEqual(["email"]);
+    expect(entities[0].indexes![0].unique).toBeUndefined();
+  });
+
+  it("parses unique index", () => {
+    const content = `
+      Jade.Entity("users", {
+          id = Jade.Integer():primaryKey(),
+          email = Jade.String(),
+          Jade.Index("idx_users_email", { "email" }, { unique = true }),
+      })
+    `;
+
+    const entities = parseSchemaFile(content);
+    expect(entities[0].indexes).toHaveLength(1);
+    expect(entities[0].indexes![0].unique).toBe(true);
+  });
+
+  it("parses composite index", () => {
+    const content = `
+      Jade.Entity("posts", {
+          id = Jade.Integer():primaryKey(),
+          user_id = Jade.Integer(),
+          title = Jade.String(),
+          Jade.Index("idx_posts_user_title", { "user_id", "title" }),
+      })
+    `;
+
+    const entities = parseSchemaFile(content);
+    expect(entities[0].indexes).toHaveLength(1);
+    expect(entities[0].indexes![0].columns).toEqual(["user_id", "title"]);
+  });
+
+  it("parses multiple indexes on same entity", () => {
+    const content = `
+      Jade.Entity("users", {
+          id = Jade.Integer():primaryKey(),
+          email = Jade.String(),
+          name = Jade.String(),
+          Jade.Index("idx_users_email", { "email" }, { unique = true }),
+          Jade.Index("idx_users_name", { "name" }),
+      })
+    `;
+
+    const entities = parseSchemaFile(content);
+    expect(entities[0].indexes).toHaveLength(2);
+    expect(entities[0].indexes![0].name).toBe("idx_users_email");
+    expect(entities[0].indexes![1].name).toBe("idx_users_name");
+  });
+
+  it("returns undefined indexes when none defined", () => {
+    const content = `
+      Jade.Entity("users", {
+          id = Jade.Integer():primaryKey(),
+          name = Jade.String(),
+      })
+    `;
+
+    const entities = parseSchemaFile(content);
+    expect(entities[0].indexes).toBeUndefined();
+  });
 });
 
 describe("Schema Validation", () => {
