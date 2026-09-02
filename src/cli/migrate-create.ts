@@ -4,6 +4,13 @@ import { Logger, AppError, handleError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { writeFile, ensureDir } from "../core/file-manager.js";
 
+/** Generate a 14-digit timestamp compatible with Jade's os.date("%Y%m%d%H%M%S") */
+function jadeTimestamp(): string {
+  const now = new Date();
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+}
+
 interface MigrateCreateOptions {
   name?: string;
   database?: string;
@@ -41,7 +48,7 @@ export function registerMigrateCreate(migrate: Command): void {
 
         ensureDir(migrationsDir);
 
-        const timestamp = Date.now();
+        const timestamp = jadeTimestamp();
         const filename = `${timestamp}_${name}.lua`;
         const filePath = path.join(migrationsDir, filename);
 

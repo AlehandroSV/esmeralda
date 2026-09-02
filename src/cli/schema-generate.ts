@@ -5,6 +5,7 @@ import { Logger, AppError, handleError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { LuaBridge } from "../core/lua-bridge.js";
 import { getConfigPathForEnv, LUA_CONFIG_LOAD } from "../core/config.js";
+import { parseSchemaFile } from "../core/schema-parser.js";
 
 interface SchemaGenerateOptions {
   name?: string;
@@ -111,6 +112,32 @@ function schemaDiffAction(options: SchemaDiffOptions): void {
       const bridge = new LuaBridge();
       const { configPath, envConfigPath } = getConfigPathForEnv(projectRoot);
       const schemaLuaPath = path.join(projectRoot, "schema.lua");
+      const schemaDir = path.join(projectRoot, "schema");
+
+      // Support both schema.lua (declarative) and schema/ (entity files)
+      const useSchemaDir = !fs.existsSync(schemaLuaPath) && fs.existsSync(schemaDir);
+
+      if (useSchemaDir) {
+        // Read schema from entity files in schema/ directory
+        const files = fs.readdirSync(schemaDir).filter(f => f.endsWith(".lua") && f !== "init.lua");
+        const entities: string[] = [];
+        for (const file of files) {
+          const content = fs.readFileSync(path.join(schemaDir, file), "utf-8");
+          const parsed = parseSchemaFile(content);
+          for (const ent of parsed) {
+            entities.push(ent.tableName);
+          }
+        }
+
+        if (entities.length === 0) {
+          Logger.warn("No entities found in schema/");
+          return;
+        }
+
+        Logger.info(`Found ${entities.length} entities in schema/`);
+        Logger.info("Use 'esmeralda db sync' to compare and apply changes.");
+        return;
+      }
 
       const script = `
 local jade = require("jade")

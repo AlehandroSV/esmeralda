@@ -195,6 +195,13 @@ function generateEntityLua(entityName: string, tableName: string, columns: any[]
       }
     } else if (col.column_default === "true" || col.column_default === "false") {
       colDef += `:default(${col.column_default})`;
+    } else if (col.column_default && (col.column_default.includes("now()") || col.column_default.includes("CURRENT_TIMESTAMP"))) {
+      colDef += ":defaultNow()";
+    } else if (col.column_default && !col.column_default.includes("nextval")) {
+      const defaultVal = col.column_default.replace(/::[\w\s]+$/, "").replace(/^'|'$/g, "");
+      if (defaultVal && defaultVal !== "NULL") {
+        colDef += `:default("${defaultVal}")`;
+      }
     }
 
     lines.push(colDef + ",");
@@ -204,7 +211,7 @@ function generateEntityLua(entityName: string, tableName: string, columns: any[]
 
   if (foreignKeys.length > 0) {
     lines.push(``);
-    lines.push(`-- Relations`);
+    lines.push(`-- Relations (uncomment and adjust as needed)`);
 
     for (const fk of foreignKeys) {
       const foreignEntity = fk.foreign_table_name.charAt(0).toUpperCase() + fk.foreign_table_name.slice(1, -1);

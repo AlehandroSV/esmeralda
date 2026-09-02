@@ -5,6 +5,13 @@ import { findProjectRoot } from "../core/project.js";
 import { writeFile, ensureDir } from "../core/file-manager.js";
 import { getDatabaseConfig } from "../core/multi-db.js";
 
+/** Generate a 14-digit timestamp compatible with Jade's os.date("%Y%m%d%H%M%S") */
+function jadeTimestamp(): string {
+  const now = new Date();
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+}
+
 interface SeedCreateOptions {
   database?: string;
 }
@@ -41,7 +48,7 @@ export function registerSeedCreate(db: Command): void {
 
         ensureDir(seedsDir);
 
-        const timestamp = Date.now();
+        const timestamp = jadeTimestamp();
         const filename = `${timestamp}_${name}.lua`;
         const filePath = path.join(seedsDir, filename);
 
@@ -49,28 +56,14 @@ export function registerSeedCreate(db: Command): void {
 -- Created by Esmeralda
 -- ${new Date().toISOString()}
 
-local Jade = require("jade")
-
 return {
-  -- Simple format example: direct table inserts
-  data = {
-    {
-      table = "users",
-      data = {
-        { name = "Admin User", email = "admin@example.com", active = true },
-        { name = "Test User", email = "test@example.com", active = true },
-      },
+  {
+    table = "users",
+    data = {
+      { name = "Admin User", email = "admin@example.com", active = true },
+      { name = "Test User", email = "test@example.com", active = true },
     },
   },
-
-  -- Factory format example (optional): define factories for use with faker
-  factories = {},
-
-  -- Faker helpers (optional): return functions that generate random data
-  -- faker = {
-  --   name = function() return os.time() % 1000 .. "_user" end,
-  --   email = function(name) return name .. "@example.com" end,
-  -- }
 }
 `;
 

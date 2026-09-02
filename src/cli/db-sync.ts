@@ -11,6 +11,13 @@ import { ensureDir } from "../core/file-manager.js";
 import { LuaBridge } from "../core/lua-bridge.js";
 import { getConfigPathForEnv, LUA_CONFIG_LOAD } from "../core/config.js";
 
+/** Generate a 14-digit timestamp compatible with Jade's os.date("%Y%m%d%H%M%S") */
+function jadeTimestamp(): string {
+  const now = new Date();
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+}
+
 /* ─── DB introspection helpers ──────────────────────────────── */
 
 async function introspectDatabase(projectRoot: string): Promise<TableDef[]> {
@@ -440,7 +447,7 @@ async function runSync(options: SyncOptions): Promise<void> {
   Logger.info("Generating migration...");
 
   const { upSql, downSql } = generateSyncSQL(diff);
-  const timestamp = Date.now().toString().slice(0, 14);
+  const timestamp = jadeTimestamp();
 
   const parts: string[] = [];
   if (diff.createTables.length > 0) parts.push("create_" + diff.createTables.map(t => t.name).join("_"));
