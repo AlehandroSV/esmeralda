@@ -3,10 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
-import { execFile } from "child_process";
-import { promisify } from "util";
-
-const exec = promisify(execFile);
+import { LuaBridge } from "../core/lua-bridge.js";
 
 interface RollbackOptions {
   steps?: string;
@@ -26,7 +23,6 @@ export function registerMigrateRollback(migrate: Command): void {
           throw AppError.notInitialized();
         }
 
-        // Get migrations directory based on database option
         let migrationsDir: string;
         if (options.database) {
           const { getDatabaseConfig } = await import("../core/multi-db.js");
@@ -47,15 +43,22 @@ export function registerMigrateRollback(migrate: Command): void {
 
         Logger.info(`Rolling back ${steps} migration(s)...`);
 
+        const bridge = new LuaBridge();
+        const configPath = path.join(projectRoot, "jade.config.lua");
+
         const script = `
-          local jade = require("jade")
-          local config = dofile("${path.join(projectRoot, "jade.config.lua").replace(/\\/g, "\\\\")}")
-          jade.configure(config)
-          jade.migration.init(jade.driver())
-          jade.migration.rollback(jade.driver(), ${steps})
+local jade = require("jade")
+local config = dofile(ARGS.configPath)
+jade.configure(config)
+jade.migration.init(jade.driver())
+jade.migration.rollback(jade.driver(), ARGS.steps)
         `;
 
-        await exec("lua", ["-e", script]);
+        await bridge.executeSafe(script, {
+          configPath,
+          steps,
+        });
+
         Logger.success("Rollback complete!");
       } catch (error: any) {
         if (error instanceof AppError) {

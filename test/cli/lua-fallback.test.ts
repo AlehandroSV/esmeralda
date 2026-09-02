@@ -3,74 +3,117 @@ import * as fs from "fs";
 import * as path from "path";
 
 describe("Lua binary detection in Docker", () => {
-  it("seed.ts: detects lua binary via 'which' before executing", () => {
+  it("lua-bridge.ts: detects lua binary via 'which' before executing", () => {
+    const bridgeSource = fs.readFileSync(
+      path.join(__dirname, "../../src/core/lua-bridge.ts"),
+      "utf-8"
+    );
+    expect(bridgeSource).toContain('which ${bin}');
+    expect(bridgeSource).toContain('const luaBins = ["luajit", "lua5.4", "lua5.3", "lua5.1", "lua"]');
+  });
+
+  it("lua-bridge.ts: Docker uses exec (not spawn) with -T flag", () => {
+    const bridgeSource = fs.readFileSync(
+      path.join(__dirname, "../../src/core/lua-bridge.ts"),
+      "utf-8"
+    );
+    expect(bridgeSource).toContain('"compose", "exec", "-T"');
+  });
+
+  it("lua-bridge.ts: detects docker-compose service name from file", () => {
+    const bridgeSource = fs.readFileSync(
+      path.join(__dirname, "../../src/core/lua-bridge.ts"),
+      "utf-8"
+    );
+    expect(bridgeSource).toContain('composeContent.match');
+    expect(bridgeSource).toContain('serviceName = serviceMatch');
+  });
+
+  it("lua-bridge.ts: service name defaults to 'api'", () => {
+    const bridgeSource = fs.readFileSync(
+      path.join(__dirname, "../../src/core/lua-bridge.ts"),
+      "utf-8"
+    );
+    expect(bridgeSource).toContain('serviceMatch ? serviceMatch[1] : "api"');
+  });
+
+  it("seed.ts: uses LuaBridge instead of direct exec", () => {
     const seedSource = fs.readFileSync(
       path.join(__dirname, "../../src/cli/seed.ts"),
       "utf-8"
     );
-    // Uses which to detect available binary
-    expect(seedSource).toContain('which ${bin}');
-    // Has fallback chain
-    expect(seedSource).toContain('const luaBins = ["luajit", "lua5.4", "lua5.3", "lua5.1", "lua"]');
+    expect(seedSource).toContain('import { LuaBridge }');
+    expect(seedSource).toContain('new LuaBridge()');
+    expect(seedSource).not.toContain('import { execFile }');
   });
 
-  it("migrate.ts: detects lua binary via 'which' before executing", () => {
+  it("migrate.ts: uses LuaBridge instead of direct exec", () => {
     const migrateSource = fs.readFileSync(
       path.join(__dirname, "../../src/cli/migrate.ts"),
       "utf-8"
     );
-    expect(migrateSource).toContain('which ${bin}');
-    expect(migrateSource).toContain('const luaBins = ["luajit", "lua5.4", "lua5.3", "lua5.1", "lua"]');
+    expect(migrateSource).toContain('import { LuaBridge }');
+    expect(migrateSource).toContain('new LuaBridge()');
+    expect(migrateSource).not.toContain('import { execFile }');
   });
 
-  it("seed.ts: local fallback tries luajit then lua", () => {
-    const seedSource = fs.readFileSync(
-      path.join(__dirname, "../../src/cli/seed.ts"),
+  it("db-pull.ts: uses LuaBridge instead of direct exec", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "../../src/cli/db-pull.ts"),
       "utf-8"
     );
-    expect(seedSource).toContain('await exec("luajit"');
-    expect(seedSource).toContain('await exec("lua"');
+    expect(source).toContain('import { LuaBridge');
+    expect(source).toContain('new LuaBridge()');
+    expect(source).not.toContain('import { execFile }');
   });
 
-  it("migrate.ts: local fallback tries luajit then lua", () => {
-    const migrateSource = fs.readFileSync(
-      path.join(__dirname, "../../src/cli/migrate.ts"),
+  it("db-sync.ts: uses LuaBridge instead of direct exec", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "../../src/cli/db-sync.ts"),
       "utf-8"
     );
-    expect(migrateSource).toContain('await exec("luajit"');
-    expect(migrateSource).toContain('await exec("lua"');
+    expect(source).toContain('import { LuaBridge }');
+    expect(source).toContain('new LuaBridge()');
+    expect(source).not.toContain('import { execFile }');
   });
 
-  it("seed.ts: Docker uses exec (not spawn) with -T flag", () => {
-    const seedSource = fs.readFileSync(
-      path.join(__dirname, "../../src/cli/seed.ts"),
+  it("db-push.ts: uses LuaBridge instead of direct exec", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "../../src/cli/db-push.ts"),
       "utf-8"
     );
-    expect(seedSource).toContain('"compose", "exec", "-T"');
+    expect(source).toContain('import { LuaBridge }');
+    expect(source).toContain('new LuaBridge()');
+    expect(source).not.toContain('import { execFile }');
   });
 
-  it("migrate.ts: Docker uses exec (not spawn) with -T flag", () => {
-    const migrateSource = fs.readFileSync(
-      path.join(__dirname, "../../src/cli/migrate.ts"),
+  it("schema-generate.ts: uses LuaBridge instead of direct exec", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "../../src/cli/schema-generate.ts"),
       "utf-8"
     );
-    expect(migrateSource).toContain('"compose", "exec", "-T"');
+    expect(source).toContain('import { LuaBridge }');
+    expect(source).toContain('new LuaBridge()');
+    expect(source).not.toContain('import { execFile }');
   });
 
-  it("seed.ts: detects docker-compose service name from file", () => {
-    const seedSource = fs.readFileSync(
-      path.join(__dirname, "../../src/cli/seed.ts"),
+  it("migrate-rollback.ts: uses LuaBridge instead of direct exec", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "../../src/cli/migrate-rollback.ts"),
       "utf-8"
     );
-    expect(seedSource).toContain('composeContent.match');
-    expect(seedSource).toContain('serviceName = serviceMatch');
+    expect(source).toContain('import { LuaBridge }');
+    expect(source).toContain('new LuaBridge()');
+    expect(source).not.toContain('import { execFile }');
   });
 
-  it("seed.ts: service name defaults to 'api'", () => {
-    const seedSource = fs.readFileSync(
-      path.join(__dirname, "../../src/cli/seed.ts"),
-      "utf-8"
-    );
-    expect(seedSource).toContain('serviceMatch ? serviceMatch[1] : "api"');
+  it("no CLI file uses -e with interpolated code", () => {
+    const cliDir = path.join(__dirname, "../../src/cli");
+    const files = fs.readdirSync(cliDir).filter(f => f.endsWith(".ts"));
+    for (const file of files) {
+      const source = fs.readFileSync(path.join(cliDir, file), "utf-8");
+      expect(source).not.toContain('"-e",');
+      expect(source).not.toContain("'-e',");
+    }
   });
 });

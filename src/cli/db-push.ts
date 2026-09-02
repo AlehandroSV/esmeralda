@@ -4,10 +4,7 @@ import * as path from "path";
 import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { parseSchemaFile } from "../core/schema-parser.js";
-import { execFile } from "child_process";
-import { promisify } from "util";
-
-const exec = promisify(execFile);
+import { LuaBridge } from "../core/lua-bridge.js";
 
 interface DbPushOptions {
   force?: boolean;
@@ -32,7 +29,6 @@ export function registerDbPush(db: Command): void {
           throw AppError.schemaDirNotFound();
         }
 
-        // Parse schema files
         const files = fs.readdirSync(schemaDir).filter(f => f.endsWith(".lua") && f !== "init.lua");
         const entities = [];
 
@@ -56,20 +52,23 @@ export function registerDbPush(db: Command): void {
           return;
         }
 
-        // Generate and execute SQL
         const sqlStatements = generateSchemaSQL(entities);
+        const bridge = new LuaBridge();
+        const configPath = path.join(projectRoot, "jade.config.lua");
+
+        const script = `
+local jade = require("jade")
+local config = dofile(ARGS.configPath)
+jade.configure(config)
+jade.driver():execute(ARGS.sql)
+        `;
 
         for (const sql of sqlStatements) {
           Logger.info(`  Executing: ${sql.substring(0, 80)}...`);
-
-          const script = `
-            local jade = require("jade")
-            local config = dofile("${path.join(projectRoot, "jade.config.lua").replace(/\\/g, "\\\\")}")
-            jade.configure(config)
-            jade.driver():execute([[${sql}]])
-          `;
-
-          await exec("lua", ["-e", script]);
+          await bridge.executeSafe(script, {
+            configPath,
+            sql,
+          });
         }
 
         Logger.success("Schema pushed to database!");
@@ -94,7 +93,6 @@ export function registerDbPush(db: Command): void {
 function generateSchemaSQL(entities: any[]): string[] {
   const statements: string[] = [];
 
-  // First pass: create tables
   for (const entity of entities) {
     const columns = entity.columns || [];
     const colDefs: string[] = [];
@@ -124,7 +122,6 @@ function generateSchemaSQL(entities: any[]): string[] {
     statements.push(sql);
   }
 
-  // Second pass: add foreign keys
   for (const entity of entities) {
     const columns = entity.columns || [];
 

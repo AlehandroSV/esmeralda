@@ -3,52 +3,11 @@ import * as fs from "fs";
 import * as path from "path";
 import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
-import { execFile } from "child_process";
-import { promisify } from "util";
-
-const exec = promisify(execFile);
+import { LuaBridge } from "../core/lua-bridge.js";
 
 function hasDockerCompose(projectRoot: string): boolean {
   return fs.existsSync(path.join(projectRoot, "docker-compose.yml")) ||
          fs.existsSync(path.join(projectRoot, "docker-compose.yaml"));
-}
-
-async function runInDocker(script: string, projectRoot: string): Promise<void> {
-  const composeFile = fs.existsSync(path.join(projectRoot, "docker-compose.yml"))
-    ? "docker-compose.yml" : "docker-compose.yaml";
-  const composeContent = fs.readFileSync(path.join(projectRoot, composeFile), "utf-8");
-  const serviceMatch = composeContent.match(/^\s{2}(\w+):/m);
-  const serviceName = serviceMatch ? serviceMatch[1] : "api";
-
-  // Detect which Lua binary is available in the container
-  const luaBins = ["luajit", "lua5.4", "lua5.3", "lua5.1", "lua"];
-  let luaBin = luaBins[0]; // default to luajit
-
-  for (const bin of luaBins) {
-    try {
-      await exec("docker", [
-        "compose", "exec", "-T", serviceName,
-        "sh", "-c", `which ${bin} 2>/dev/null`
-      ], { cwd: projectRoot });
-      luaBin = bin;
-      break;
-    } catch {
-      continue;
-    }
-  }
-
-  await exec("docker", [
-    "compose", "exec", "-T", serviceName,
-    luaBin, "-e", script
-  ], { cwd: projectRoot });
-}
-
-async function runLocal(script: string): Promise<void> {
-  try {
-    await exec("luajit", ["-e", script]);
-  } catch {
-    await exec("lua", ["-e", script]);
-  }
 }
 
 export function registerSeed(db: Command): void {
@@ -64,7 +23,6 @@ export function registerSeed(db: Command): void {
           throw AppError.notInitialized();
         }
 
-        // Get seeds directory based on database option
         let seedsDir: string;
         if (options?.database) {
           const { getDatabaseConfig } = await import("../core/multi-db.js");
@@ -99,34 +57,26 @@ export function registerSeed(db: Command): void {
 
         Logger.info(`Running ${files.length} seed file(s)...`);
 
+        const bridge = new LuaBridge();
+        const configPath = path.join(projectRoot, "jade.config.lua");
+
+        const script = `
+local jade = require("jade")
+local config = dofile(ARGS.configPath)
+jade.configure(config)
+dofile(ARGS.seedPath)
+        `;
+
         for (const file of files) {
           Logger.info(`  Seeding: ${file}`);
 
           try {
-            let configPath: string;
-            let seedPath: string;
+            const seedPath = path.join(seedsDir, file);
 
             if (useDocker) {
-              const relativeConfig = path.relative(projectRoot, path.join(projectRoot, "jade.config.lua")).replace(/\\/g, "/");
-              const relativeSeed = path.relative(projectRoot, path.join(seedsDir, file)).replace(/\\/g, "/");
-              configPath = "/app/" + relativeConfig;
-              seedPath = "/app/" + relativeSeed;
+              await bridge.executeSafeDocker(script, { configPath, seedPath }, projectRoot);
             } else {
-              configPath = path.join(projectRoot, "jade.config.lua").replace(/\\/g, "\\\\");
-              seedPath = path.join(seedsDir, file).replace(/\\/g, "\\\\");
-            }
-
-            const script = `
-local jade = require("jade")
-local config = dofile("${configPath}")
-jade.configure(config)
-dofile("${seedPath}")
-            `;
-
-            if (useDocker) {
-              await runInDocker(script, projectRoot);
-            } else {
-              await runLocal(script);
+              await bridge.executeSafe(script, { configPath, seedPath });
             }
 
             Logger.success(`  Seeded: ${file}`);

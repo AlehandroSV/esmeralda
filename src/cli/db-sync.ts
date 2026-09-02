@@ -1,10 +1,6 @@
 import { Command } from "commander";
 import * as fs from "fs";
 import * as path from "path";
-import { promisify } from "util";
-import { execFile } from "child_process";
-
-const exec = promisify(execFile);
 
 import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
@@ -12,48 +8,45 @@ import { parseSchemaFile, mapType } from "../core/schema-parser.js";
 import { loadState, saveState } from "../core/schema-state.js";
 import { DiffEngine, type TableDef, type ColumnDef, type DiffResult } from "../core/diff-engine.js";
 import { ensureDir } from "../core/file-manager.js";
+import { LuaBridge } from "../core/lua-bridge.js";
 
 /* ─── DB introspection helpers ──────────────────────────────── */
 
-/** Query the database for all tables and columns in public schema. */
 async function introspectDatabase(projectRoot: string): Promise<TableDef[]> {
+  const bridge = new LuaBridge();
   const configPath = path.join(projectRoot, "jade.config.lua");
 
-  // Get table list
   const listScript = `
-    local jade = require("jade")
-    local cfg = dofile("${configPath.replace(/\\/g, "\\\\")}")
-    jade.configure(cfg)
-    local rows = jade.driver():execute([[
-      SELECT table_name FROM information_schema.tables
-      WHERE table_schema = 'public' ORDER BY table_name
-    ]])
-    local names = {}
-    for _, r in ipairs(rows) do table.insert(names, r.table_name) end
-    print(require("dkjson").encode(names))
+local jade = require("jade")
+local cfg = dofile(ARGS.configPath)
+jade.configure(cfg)
+local rows = jade.driver():execute([[
+  SELECT table_name FROM information_schema.tables
+  WHERE table_schema = 'public' ORDER BY table_name
+]])
+local names = {}
+for _, r in ipairs(rows) do table.insert(names, r.table_name) end
+print(require("dkjson").encode(names))
   `;
 
-  const { stdout: tblOut } = await exec("lua", ["-e", listScript]);
-  const tableNames = JSON.parse(tblOut.trim()) as string[];
+  const tableNames: string[] = await bridge.executeSafeJson(listScript, { configPath });
   const result: TableDef[] = [];
 
   for (const tname of tableNames) {
-    // Get columns for this table
     const colScript = `
-      local jade = require("jade")
-      local cfg = dofile("${configPath.replace(/\\/g, "\\\\")}")
-      jade.configure(cfg)
-      local cols = jade.driver():execute([[
-        SELECT column_name, data_type, character_maximum_length, is_nullable, column_default
-        FROM information_schema.columns
-        WHERE table_name = '${tname}' AND table_schema = 'public'
-        ORDER BY ordinal_position
-      ]])
-      print(require("dkjson").encode(cols))
+local jade = require("jade")
+local cfg = dofile(ARGS.configPath)
+jade.configure(cfg)
+local cols = jade.driver():execute([[
+  SELECT column_name, data_type, character_maximum_length, is_nullable, column_default
+  FROM information_schema.columns
+  WHERE table_name = ']] .. ARGS.tname:gsub("'", "''") .. [[' AND table_schema = 'public'
+  ORDER BY ordinal_position
+]])
+print(require("dkjson").encode(cols))
     `;
 
-    const { stdout: colOut } = await exec("lua", ["-e", colScript]);
-    const cols = JSON.parse(colOut.trim()) as any[];
+    const cols: any[] = await bridge.executeSafeJson(colScript, { configPath, tname });
 
     if (cols.length === 0) continue;
 
@@ -166,13 +159,11 @@ function generateSyncSQL(diff: DiffResult): { upSql: string; downSql: string } {
   const upParts: string[] = [];
   const downParts: string[] = [];
 
-  // Create tables
   for (const t of diff.createTables) {
     upParts.push(generateCreateTable(t));
     downParts.push(`\n-- Drop created tables\nDROP TABLE IF EXISTS ${quote(t.name)} CASCADE;\n`);
   }
 
-  // Add columns
   for (const ac of diff.addColumns) {
     upParts.push(
       `ALTER TABLE ${quote(ac.table)} ADD COLUMN ${quote(ac.column.name)} ${toSQLType(ac.column)}${toSQLDefault(ac.column)}`
@@ -180,7 +171,6 @@ function generateSyncSQL(diff: DiffResult): { upSql: string; downSql: string } {
     downParts.push(`ALTER TABLE ${quote(ac.table)} DROP COLUMN IF EXISTS ${quote(ac.column.name)};\n`);
   }
 
-  // Modify columns — simplified to drop+add for PostgreSQL
   for (const mc of diff.modifyColumns) {
     const col = mc.column;
     upParts.push(
@@ -189,16 +179,12 @@ function generateSyncSQL(diff: DiffResult): { upSql: string; downSql: string } {
     downParts.push(`ALTER TABLE ${quote(mc.table)} DROP COLUMN IF EXISTS ${quote(col.name)};\n`);
   }
 
-  // Drop columns
   for (const dc of diff.dropColumns) {
     upParts.push(`ALTER TABLE ${quote(dc.table)} DROP COLUMN IF EXISTS ${quote(dc.column)};`);
-    // Down: would need original type info — we can't restore it, skip
   }
 
-  // Drop tables
   for (const tn of diff.dropTables) {
     upParts.push(`DROP TABLE IF EXISTS ${quote(tn)} CASCADE;`);
-    // Down: would need original DDL — skip for now
   }
 
   return {
@@ -271,7 +257,6 @@ function generateCreateTable(table: TableDef): string {
     parts.push(line + ",");
   }
 
-  // Primary key on first column if it looks like an ID
   const pkCol = table.columns.find((c) => /id$/i.test(c.name));
   if (pkCol) {
     parts.push(`    PRIMARY KEY (${quote(pkCol.name)})`);
@@ -288,17 +273,18 @@ function joinStatements(parts: string[]): string {
 /* ─── Run migration via Lua ─────────────────────────────────── */
 
 async function runMigrateScript(projectRoot: string, fileName: string): Promise<boolean> {
+  const bridge = new LuaBridge();
   const migrationsDir = path.join(projectRoot, "migrations");
   const configPath = path.join(projectRoot, "jade.config.lua");
   const migPath = path.join(migrationsDir, fileName);
 
-  const singleLineScript = `
+  const script = `
 local jade = require("jade")
-local cfg = dofile("${configPath.replace(/\\/g, "\\\\")}")
+local cfg = dofile(ARGS.configPath)
 jade.configure(cfg)
 local driver = jade.driver()
 
-local f = io.open("${migPath.replace(/\\/g, "\\\\")}", "r")
+local f = io.open(ARGS.migPath, "r")
 if not f then
   print("ERROR: Cannot read migration file")
   os.exit(1)
@@ -318,22 +304,14 @@ for stmt in sql:gmatch("[^;]+;?") do
   end
 end
 print("OK")
-`;
+  `;
 
   try {
-    await exec("lua", ["-e", singleLineScript]);
+    await bridge.executeSafe(script, { configPath, migPath });
     return true;
   } catch {
     return false;
   }
-}
-
-function escapeLuaString(s: string): string {
-  return s
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r");
 }
 
 /* ─── Main sync operation ───────────────────────────────────── */
@@ -350,22 +328,18 @@ async function runSync(options: SyncOptions): Promise<void> {
     throw AppError.notInitialized();
   }
 
-  /* ── Security: block production ── */
   if (process.env.JADE_ENV === "production") {
     Logger.error("db sync is not allowed in production environment.");
     Logger.info("Use 'esmeralda migrate' instead.");
     process.exit(1);
   }
 
-  /* ── 1. Introspect current DB schema ── */
   Logger.info("Introspecting current database schema...");
   const currentDb: TableDef[] = await introspectDatabase(projectRoot);
 
-  /* ── 2. Parse local schema files ── */
   Logger.info("Reading local schema files from schema/...");
   const desiredSchema: TableDef[] = parseLocalSchema(projectRoot);
 
-  /* ── 3. Compute diff ── */
   const engine = new DiffEngine();
   const diff = engine.compute(desiredSchema, currentDb);
 
@@ -374,7 +348,6 @@ async function runSync(options: SyncOptions): Promise<void> {
     return;
   }
 
-  /* ── 4. Display differences ── */
   Logger.info("");
   Logger.info("Differences found:");
   const diffLines = formatDiff(diff);
@@ -388,14 +361,12 @@ async function runSync(options: SyncOptions): Promise<void> {
     return;
   }
 
-  /* ── 5. Generate migration SQL & file ── */
   Logger.info("");
   Logger.info("Generating migration...");
 
   const { upSql, downSql } = generateSyncSQL(diff);
   const timestamp = Date.now().toString().slice(0, 14);
 
-  // Generate descriptive name from diff
   const parts: string[] = [];
   if (diff.createTables.length > 0) parts.push("create_" + diff.createTables.map(t => t.name).join("_"));
   if (diff.dropTables.length > 0) parts.push("remove_" + diff.dropTables.join("_"));
@@ -418,7 +389,6 @@ async function runSync(options: SyncOptions): Promise<void> {
   fs.writeFileSync(fullPath, migrationContent, "utf-8");
   Logger.info(`  Created migrations/${fileName}`);
 
-  /* ── 6. Apply (or prompt) ── */
   if (options.force) {
     Logger.info("Applying migration (--force)...");
   } else {
@@ -430,7 +400,6 @@ async function runSync(options: SyncOptions): Promise<void> {
     }
   }
 
-  /* ── 7. Execute migration ── */
   Logger.info("Applying migration...");
   const success = await runMigrateScript(projectRoot, fileName);
 

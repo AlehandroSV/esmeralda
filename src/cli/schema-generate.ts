@@ -3,10 +3,7 @@ import * as path from "path";
 import * as fs from "fs";
 import { Logger } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
-import { execFile } from "child_process";
-import { promisify } from "util";
-
-const exec = promisify(execFile);
+import { LuaBridge } from "../core/lua-bridge.js";
 
 interface SchemaGenerateOptions {
   name?: string;
@@ -29,7 +26,6 @@ export function registerSchemaGenerate(program: Command): void {
 
         Logger.info("Generating schema from declarative definition...");
 
-        // Check if schema definition file exists
         const schemaDefPath = path.join(projectRoot, "schema.lua");
         if (!fs.existsSync(schemaDefPath)) {
           Logger.error("schema.lua not found in project root.");
@@ -60,37 +56,31 @@ return schema
           process.exit(1);
         }
 
-        // Execute Lua script to generate schema files
         const outputDir = options.output || "schema";
-        const schemaName = options.name || "schema";
+        const bridge = new LuaBridge();
+        const configPath = path.join(projectRoot, "jade.config.lua");
 
         const script = `
-          local jade = require("jade")
-          local config = dofile("${path.join(projectRoot, "jade.config.lua").replace(/\\/g, "\\\\")}")
-          jade.configure(config)
-
-          -- Load schema definition
-          local schema_def = dofile("${schemaDefPath.replace(/\\/g, "\\\\")}")
-
-          -- Generate Lua files
-          local files = jade.Declarative.toLuaFiles(schema_def)
-
-          -- Output as JSON
-          local result = {}
-          for filename, content in pairs(files) do
-              table.insert(result, { filename = filename, content = content })
-          end
-          print(require("dkjson").encode(result))
+local jade = require("jade")
+local config = dofile(ARGS.configPath)
+jade.configure(config)
+local schema_def = dofile(ARGS.schemaDefPath)
+local files = jade.Declarative.toLuaFiles(schema_def)
+local result = {}
+for filename, content in pairs(files) do
+    table.insert(result, { filename = filename, content = content })
+end
+print(require("dkjson").encode(result))
         `;
 
-        const { stdout } = await exec("lua", ["-e", script]);
-        const files = JSON.parse(stdout.trim());
+        const files: Array<{ filename: string; content: string }> = await bridge.executeSafeJson(script, {
+          configPath,
+          schemaDefPath,
+        });
 
-        // Create output directory
         const outputPath = path.join(projectRoot, outputDir);
         fs.mkdirSync(outputPath, { recursive: true });
 
-        // Write files
         for (const file of files) {
           const filePath = path.join(outputPath, file.filename);
           fs.writeFileSync(filePath, file.content, "utf-8");
@@ -124,56 +114,54 @@ function schemaDiffAction(options: SchemaDiffOptions): void {
 
       Logger.info("Comparing schema with database...");
 
-      // Execute Lua script to generate diff
+      const bridge = new LuaBridge();
+      const configPath = path.join(projectRoot, "jade.config.lua");
+      const schemaLuaPath = path.join(projectRoot, "schema.lua");
+
       const script = `
-        local jade = require("jade")
-        local config = dofile("${path.join(projectRoot, "jade.config.lua").replace(/\\/g, "\\\\")}")
-        jade.configure(config)
+local jade = require("jade")
+local config = dofile(ARGS.configPath)
+jade.configure(config)
 
-        -- Load current schema from database
-        local tables = jade.driver():execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name")
-        local current_schema = { models = {} }
+local tables = jade.driver():execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name")
+local current_schema = { models = {} }
 
-        for _, row in ipairs(tables) do
-            local table_name = row.table_name
-            local cols = jade.driver():execute("SELECT column_name, data_type, character_maximum_length, is_nullable, column_default FROM information_schema.columns WHERE table_name = '" .. table_name .. "' ORDER BY ordinal_position")
+for _, row in ipairs(tables) do
+    local table_name = row.table_name
+    local cols = jade.driver():execute("SELECT column_name, data_type, character_maximum_length, is_nullable, column_default FROM information_schema.columns WHERE table_name = '" .. table_name:gsub("'", "''") .. "' ORDER BY ordinal_position")
 
-            local fields = {}
-            for _, col in ipairs(cols) do
-                local field = {
-                    name = col.column_name,
-                    type = col.data_type,
-                    not_null = col.is_nullable == "NO",
-                }
-                if col.character_maximum_length then
-                    field.length = col.character_maximum_length
-                end
-                if col.column_default and col.column_default:find("nextval") then
-                    field.primary_key = true
-                end
-                fields[col.column_name] = field
-            end
-
-            current_schema.models[table_name] = {
-                tableName = table_name,
-                fields = fields,
-            }
+    local fields = {}
+    for _, col in ipairs(cols) do
+        local field = {
+            name = col.column_name,
+            type = col.data_type,
+            not_null = col.is_nullable == "NO",
+        }
+        if col.character_maximum_length then
+            field.length = col.character_maximum_length
         end
+        if col.column_default and col.column_default:find("nextval") then
+            field.primary_key = true
+        end
+        fields[col.column_name] = field
+    end
 
-        -- Load declarative schema
-        local schema_def = dofile("${path.join(projectRoot, "schema.lua").replace(/\\/g, "\\\\")}")
+    current_schema.models[table_name] = {
+        tableName = table_name,
+        fields = fields,
+    }
+end
 
-        -- Generate diff
-        local diff = jade.Declarative.diff(current_schema, schema_def)
-
-        -- Output as JSON
-        print(require("dkjson").encode(diff))
+local schema_def = dofile(ARGS.schemaLuaPath)
+local diff = jade.Declarative.diff(current_schema, schema_def)
+print(require("dkjson").encode(diff))
       `;
 
-      const { stdout } = await exec("lua", ["-e", script]);
-      const diff = JSON.parse(stdout.trim());
+      const diff = await bridge.executeSafeJson(script, {
+        configPath,
+        schemaLuaPath,
+      });
 
-      // Display diff
       if (diff.tables_to_create.length > 0) {
         Logger.info("Tables to create:");
         for (const table of diff.tables_to_create) {
@@ -215,9 +203,7 @@ function schemaDiffAction(options: SchemaDiffOptions): void {
         return;
       }
 
-      // Generate migration
       Logger.info("Generating migration...");
-      // TODO: Implement migration generation from diff
       Logger.success("Migration generation not yet implemented.");
     } catch (error: any) {
       Logger.error("Failed to compare schema:");
@@ -236,7 +222,6 @@ export function registerSchemaDiff(db: Command): void {
     .option("--preview", "Preview changes without generating migration")
     .action(schemaDiffAction);
 
-  // Hidden alias for backwards compatibility
   db.command("schema-diff")
     .description("Compare current schema with database and generate migration (alias for 'db diff')")
     .option("--preview", "Preview changes without generating migration")
