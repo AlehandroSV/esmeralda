@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import * as path from "path";
 import * as fs from "fs";
-import { Logger } from "../utils/logger.js";
+import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { parseSchemaFile, EntityDef } from "../core/schema-parser.js";
 import { generateMigration } from "../core/migration-generator.js";
@@ -24,14 +24,12 @@ export function registerGenerate(program: Command): void {
     .action(async (options: GenerateOptions) => {
       const projectRoot = findProjectRoot();
       if (!projectRoot) {
-        Logger.error("Not a Jade project. Run 'esmeralda init' first.");
-        process.exit(1);
+        throw AppError.notInitialized();
       }
 
       const schemaDir = path.join(projectRoot, "schema");
       if (!fs.existsSync(schemaDir)) {
-        Logger.error("Schema directory not found.");
-        process.exit(1);
+        throw AppError.schemaDirNotFound();
       }
 
       Logger.info("Reading schema files...");

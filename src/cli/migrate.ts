@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import * as fs from "fs";
 import * as path from "path";
-import { Logger, AppError } from "../utils/logger.js";
+import { Logger, AppError, handleError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { LuaBridge } from "../core/lua-bridge.js";
 import { getConfigPathForEnv, LUA_CONFIG_LOAD } from "../core/config.js";
@@ -111,20 +111,8 @@ print("  OK: " .. ARGS.fileName)
         }
 
         Logger.success("All migrations applied!");
-      } catch (error: any) {
-        if (error instanceof AppError) {
-          Logger.error(error.message);
-          if (error.suggestion) {
-            Logger.info(`Suggestion: ${error.suggestion}`);
-          }
-        } else {
-          Logger.error("Migration failed:");
-          Logger.error(error.message);
-        }
-        if (process.env.DEBUG) {
-          console.error(error.stack);
-        }
-        process.exit(1);
+      } catch (error: unknown) {
+        handleError(error);
       }
     });
 
@@ -190,20 +178,8 @@ print(require("dkjson").encode(result))
         const pending = files.filter(f => !appliedSet.has(f));
         Logger.info("");
         Logger.info(`Applied: ${applied.length}, Pending: ${pending.length}`);
-      } catch (error: any) {
-        if (error instanceof AppError) {
-          Logger.error(error.message);
-          if (error.suggestion) {
-            Logger.info(`Suggestion: ${error.suggestion}`);
-          }
-        } else {
-          Logger.error("Failed to get migration status:");
-          Logger.error(error.message);
-        }
-        if (process.env.DEBUG) {
-          console.error(error.stack);
-        }
-        process.exit(1);
+      } catch (error: unknown) {
+        handleError(error);
       }
     });
 

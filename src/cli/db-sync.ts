@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as readline from "readline";
 
-import { Logger, AppError } from "../utils/logger.js";
+import { Logger, AppError, handleError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { parseSchemaFile, mapType } from "../core/schema-parser.js";
 import { DiffEngine, type TableDef, type ColumnDef, type DiffResult, type IndexDef } from "../core/diff-engine.js";
@@ -402,9 +402,11 @@ async function runSync(options: SyncOptions): Promise<void> {
   }
 
   if (process.env.JADE_ENV === "production") {
-    Logger.error("db sync is not allowed in production environment.");
-    Logger.info("Use 'esmeralda migrate' instead.");
-    process.exit(1);
+    throw new AppError(
+      "SYNC_BLOCKED_IN_PRODUCTION",
+      "db sync is not allowed in production environment.",
+      "Use 'esmeralda migrate' instead."
+    );
   }
 
   Logger.info("Introspecting current database schema...");
@@ -514,16 +516,8 @@ export function registerDbSync(db: Command): void {
     .action(async (options: SyncOptions) => {
       try {
         await runSync(options);
-      } catch (error: any) {
-        if (error instanceof AppError) {
-          Logger.error(error.message);
-          if (error.suggestion) Logger.info(`Suggestion: ${error.suggestion}`);
-        } else {
-          Logger.error("db sync failed:");
-          Logger.error(error.message);
-        }
-        if (process.env.DEBUG) console.error(error.stack);
-        process.exit(1);
+      } catch (error: unknown) {
+        handleError(error);
       }
     });
 }

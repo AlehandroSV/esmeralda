@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import * as fs from "fs";
 import * as path from "path";
-import { Logger, AppError } from "../utils/logger.js";
+import { Logger, AppError, handleError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { parseSchemaFile } from "../core/schema-parser.js";
 import { saveState } from "../core/schema-state.js";
@@ -125,20 +125,8 @@ print(require("dkjson").encode(fks))
         }
 
         Logger.success("Entity files generated in schema/");
-      } catch (error: any) {
-        if (error instanceof AppError) {
-          Logger.error(error.message);
-          if (error.suggestion) {
-            Logger.info(`Suggestion: ${error.suggestion}`);
-          }
-        } else {
-          Logger.error("Failed to introspect database:");
-          Logger.error(error.message);
-        }
-        if (process.env.DEBUG) {
-          console.error(error.stack);
-        }
-        process.exit(1);
+      } catch (error: unknown) {
+        handleError(error);
       }
     });
 }

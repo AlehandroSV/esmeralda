@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import * as fs from "fs";
 import * as path from "path";
-import { Logger, AppError } from "../utils/logger.js";
+import { Logger, AppError, handleError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { parseSchemaFile } from "../core/schema-parser.js";
 import { LuaBridge } from "../core/lua-bridge.js";
@@ -74,20 +74,8 @@ jade.driver():execute(ARGS.sql)
         }
 
         Logger.success("Schema pushed to database!");
-      } catch (error: any) {
-        if (error instanceof AppError) {
-          Logger.error(error.message);
-          if (error.suggestion) {
-            Logger.info(`Suggestion: ${error.suggestion}`);
-          }
-        } else {
-          Logger.error("Failed to push schema:");
-          Logger.error(error.message);
-        }
-        if (process.env.DEBUG) {
-          console.error(error.stack);
-        }
-        process.exit(1);
+      } catch (error: unknown) {
+        handleError(error);
       }
     });
 }

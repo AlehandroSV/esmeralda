@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import * as path from "path";
 import * as fs from "fs";
-import { Logger } from "../utils/logger.js";
+import { Logger, AppError, handleError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { LuaBridge } from "../core/lua-bridge.js";
 import { getConfigPathForEnv, LUA_CONFIG_LOAD } from "../core/config.js";
@@ -21,16 +21,14 @@ export function registerSchemaGenerate(program: Command): void {
       try {
         const projectRoot = findProjectRoot();
         if (!projectRoot) {
-          Logger.error("Not a Jade project. Run 'esmeralda init' first.");
-          process.exit(1);
+          throw AppError.notInitialized();
         }
 
         Logger.info("Generating schema from declarative definition...");
 
         const schemaDefPath = path.join(projectRoot, "schema.lua");
         if (!fs.existsSync(schemaDefPath)) {
-          Logger.error("schema.lua not found in project root.");
-          Logger.info("Create a schema.lua file with your declarative schema definition.");
+          throw AppError.schemaFileNotFound();
           Logger.info("Example:");
           Logger.info(`
 local Jade = require("jade")
@@ -90,13 +88,8 @@ print(require("dkjson").encode(result))
         }
 
         Logger.success(`Schema files generated in ${outputDir}/`);
-      } catch (error: any) {
-        Logger.error("Failed to generate schema:");
-        Logger.error(error.message);
-        if (process.env.DEBUG) {
-          console.error(error.stack);
-        }
-        process.exit(1);
+      } catch (error: unknown) {
+        handleError(error);
       }
     });
 }
@@ -110,8 +103,7 @@ function schemaDiffAction(options: SchemaDiffOptions): void {
     try {
       const projectRoot = findProjectRoot();
       if (!projectRoot) {
-        Logger.error("Not a Jade project. Run 'esmeralda init' first.");
-        process.exit(1);
+        throw AppError.notInitialized();
       }
 
       Logger.info("Comparing schema with database...");
@@ -208,13 +200,8 @@ print(require("dkjson").encode(diff))
 
       Logger.info("Generating migration...");
       Logger.success("Migration generation not yet implemented.");
-    } catch (error: any) {
-      Logger.error("Failed to compare schema:");
-      Logger.error(error.message);
-      if (process.env.DEBUG) {
-        console.error(error.stack);
-      }
-      process.exit(1);
+    } catch (error: unknown) {
+      handleError(error);
     }
   })();
 }
