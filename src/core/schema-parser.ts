@@ -1,5 +1,3 @@
-import * as fs from "fs";
-import * as path from "path";
 import type { IndexDef } from "./diff-engine.js";
 
 export interface ColumnDef {
@@ -190,7 +188,6 @@ export function mapType(typeName: string): string {
 export function validateSchema(entities: EntityDef[]): ValidationError[] {
   const errors: ValidationError[] = [];
   const tableNames = new Set<string>();
-  const columnNames = new Map<string, Set<string>>();
 
   for (const entity of entities) {
     // Check for duplicate table names
