@@ -10,6 +10,7 @@ import { registerMigrateRollback } from "../cli/migrate-rollback.js";
 import { registerDbPull } from "../cli/db-pull.js";
 import { registerDbPush } from "../cli/db-push.js";
 import { registerSeed } from "../cli/seed.js";
+import { registerSeedCreate } from "../cli/db-seed-create.js";
 
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf-8"));
 
@@ -29,7 +30,8 @@ registerMigrateRollback(migrate);
 const db = program.command("db").description("Database operations");
 registerDbPull(db);
 registerDbPush(db);
-registerSeed(program);
+registerSeed(db);
+registerSeedCreate(db);
 
 if (process.argv.includes("-help")) {
   program.help();

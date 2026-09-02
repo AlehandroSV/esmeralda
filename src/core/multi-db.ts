@@ -12,6 +12,12 @@ export interface DatabaseConfig {
   schemaPath?: string;
   migrationPath?: string;
   seedPath?: string;
+  /** Max connections for this pool */
+  max_connections?: number;
+  /** "primary" or "read" — identifies read replicas when using jade.database.addReplicas() */
+  role?: "primary" | "read";
+  /** Replica configs registered via jade.database.addReplicas() */
+  replicas?: DatabaseConfig[];
 }
 
 export interface MultiDbConfig {
@@ -43,7 +49,7 @@ export function parseMultiDbConfig(projectRoot: string): MultiDbConfig | null {
       if config.databases then
         result.databases = {}
         for name, db in pairs(config.databases) do
-          result.databases[name] = {
+          local entry = {
             name = name,
             driver = db.driver or "postgresql",
             host = db.host,
@@ -55,6 +61,24 @@ export function parseMultiDbConfig(projectRoot: string): MultiDbConfig | null {
             migrationPath = db.migrationPath,
             seedPath = db.seedPath,
           }
+          if db.max_connections then entry.max_connections = db.max_connections end
+          if db.role then entry.role = db.role end
+          if type(db.replicas) == "table" and #db.replicas > 0 then
+            entry.replicas = {}
+            for i, r in ipairs(db.replicas) do
+              entry.replicas[i] = {
+                name = r.name or ("replica_" .. i),
+                driver = r.driver or db.driver or "postgresql",
+                host = r.host,
+                port = r.port,
+                database = r.database or db.database,
+                user = r.user,
+                password = r.password,
+                role = "read",
+              }
+            end
+          end
+          result.databases[name] = entry
         end
         result.default = config.default or next(config.databases)
       end

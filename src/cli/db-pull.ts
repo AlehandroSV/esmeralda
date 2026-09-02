@@ -149,31 +149,51 @@ function generateEntityLua(entityName: string, tableName: string, columns: any[]
 
   for (const col of columns) {
     const typeMap: Record<string, string> = {
-      "integer": "Integer",
-      "bigint": "Integer",
-      "smallint": "Integer",
-      "serial": "Integer",
-      "bigserial": "Integer",
-      "numeric": "Decimal",
-      "real": "Float",
+      "integer":     "Integer",
+      "bigint":      "BigInt",
+      "smallint":    "Integer",
+      "serial":      "Integer",
+      "bigserial":   "BigInt",
+      "numeric":     "Decimal",
+      "decimal":     "Decimal",
+      "real":        "Float",
       "double precision": "Float",
-      "varchar": "String",
+      "varchar":     "String",
       "character varying": "String",
-      "text": "Text",
-      "boolean": "Boolean",
-      "date": "Date",
+      "text":        "Text",
+      "char":        "String",
+      "boolean":     "Boolean",
+      "date":        "Date",
       "timestamp with time zone": "Timestamp",
       "timestamp without time zone": "Timestamp",
-      "timestamp": "Timestamp",
-      "uuid": "UUID",
-      "json": "JSON",
-      "jsonb": "JSON",
+      "timestamp":   "Timestamp",
+      "uuid":        "UUID",
+      "json":        "JSON",
+      "jsonb":       "JSON",
+      "enum":        "Enum",
+      // CUID/NanoID columns appear as varchar(25)/varchar(21) — heuristics
     };
 
     const typeName = typeMap[col.data_type] || "Text";
     let colDef = `    ${col.column_name} = Jade.${typeName}()`;
 
-    if (col.character_maximum_length && typeName === "String") {
+    // Detect CUID (varchar(25)) and NanoID (varchar(21)) by column name heuristics
+    if (typeName === "String" && col.character_maximum_length === 25) {
+      if (/^(id|cuid)$/.test(col.column_name)) {
+        colDef = `    ${col.column_name} = Jade.CUID():primaryKey()`;
+      } else {
+        colDef = `    ${col.column_name} = Jade.String(${col.character_maximum_length})`;
+      }
+    }
+    if (typeName === "String" && col.character_maximum_length === 21) {
+      colDef = `    ${col.column_name} = Jade.NanoID():unique()`;
+    }
+    // Detect ENUM — if data_type is "enum", check udt_name for hint
+    if (typeName === "Enum") {
+      colDef = `    ${col.column_name} = Jade.Enum(/* TODO: specify values */)`;
+    }
+
+    if (col.character_maximum_length && typeName === "String" && !col.cuidDefault && !col.nanoidDefault) {
       colDef = `    ${col.column_name} = Jade.String(${col.character_maximum_length})`;
     }
 
@@ -182,7 +202,9 @@ function generateEntityLua(entityName: string, tableName: string, columns: any[]
     }
 
     if (col.column_default && col.column_default.includes("nextval")) {
-      colDef += ":primaryKey()";
+      if (!/^(id|cuid)$/.test(col.column_name) || col.character_maximum_length !== 25) {
+        colDef += ":primaryKey()";
+      }
     } else if (col.column_default === "true" || col.column_default === "false") {
       colDef += `:default(${col.column_default})`;
     }

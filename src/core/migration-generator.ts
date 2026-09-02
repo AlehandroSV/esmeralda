@@ -9,13 +9,38 @@ export function generateMigration(entities: EntityDef[], direction: "up" | "down
   const lines: string[] = [];
 
   if (direction === "up") {
+    // Collect all ENUM types first — they must be created before tables reference them
+    const enumDefs: string[] = [];
+    for (const entity of entities) {
+      for (const col of entity.columns) {
+        if (col.enumValues) {
+          const typeName = `enum_${entity.tableName}_${col.name}`;
+          enumDefs.push(
+            `    jade.driver():execute([[CREATE TYPE ${quoteIdentifier(typeName)} AS ENUM (${col.enumValues.map(v => `'${v.replace(/'/g, "''")}'`).join(', ')});]])`
+          );
+        }
+      }
+    }
+    if (enumDefs.length > 0) {
+      lines.push(enumDefs.join("\n"));
+    }
+
     for (const entity of entities) {
       lines.push(generateCreateTable(entity));
     }
   } else {
-    // Down migration drops tables in reverse order
+    // Down migration drops tables in reverse order, then drops enums
     for (const entity of [...entities].reverse()) {
       lines.push(`    jade.driver():execute("DROP TABLE IF EXISTS ${quoteIdentifier(entity.tableName)} CASCADE")`);
+    }
+    // Drop enum types in original order
+    for (const entity of entities) {
+      for (const col of entity.columns) {
+        if (col.enumValues) {
+          const typeName = `enum_${entity.tableName}_${col.name}`;
+          lines.push(`    jade.driver():execute("DROP TYPE IF EXISTS ${quoteIdentifier(typeName)}")`);
+        }
+      }
     }
   }
 
@@ -38,6 +63,19 @@ function generateCreateTable(entity: EntityDef): string {
       if (col.unique) def += " UNIQUE";
       if (col.default !== undefined) {
         def += ` DEFAULT ${getSQLDefault(col)}`;
+      } else if (col.cuidDefault) {
+        // Jade.CUID generates cuid() at runtime — no DB-level default needed
+        // but document it via comment so generated migrations are clear
+        def += "";  // cuid is handled by Jade's entity system, not the DB
+      } else if (col.nanoidDefault) {
+        // Same as CUID — nanoid() is generated at runtime
+        def += "";
+      }
+
+      // Add CHECK constraint for ENUM columns when column type is VARCHAR without explicit enum type
+      if (col.enumValues && col.enumValues.length > 0) {
+        const checkValues = col.enumValues.map((v) => `'${v.replace(/'/g, "''")}'`).join(", ");
+        def += ` CHECK (${quoteIdentifier(col.name)} IN (${checkValues}))`;
       }
     }
 
@@ -69,6 +107,6 @@ function getSQLDefault(col: ColumnDef): string {
   if (col.default === "true") return "TRUE";
   if (col.default === "false") return "FALSE";
   if (col.default === "CURRENT_TIMESTAMP") return "NOW()";
-  if (typeof col.default === "string") return `'${col.default}'`;
+  if (typeof col.default === "string") return `'${col.default.replace(/'/g, "''")}'`;
   return String(col.default);
 }
