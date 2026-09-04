@@ -1,117 +1,103 @@
 import { Command } from "commander";
 import * as fs from "fs";
 import * as path from "path";
-import * as readline from "readline";
+import { promisify } from "util";
+import { execFile } from "child_process";
 
-import { Logger, AppError, handleError } from "../utils/logger.js";
+const exec = promisify(execFile);
+
+import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { parseSchemaFile, mapType } from "../core/schema-parser.js";
-import { DiffEngine, type TableDef, type ColumnDef, type DiffResult, type IndexDef } from "../core/diff-engine.js";
+import { loadState, saveState } from "../core/schema-state.js";
+import { DiffEngine, type TableDef, type ColumnDef, type DiffResult } from "../core/diff-engine.js";
 import { ensureDir } from "../core/file-manager.js";
-import { LuaBridge } from "../core/lua-bridge.js";
-import { getConfigPathForEnv, LUA_CONFIG_LOAD } from "../core/config.js";
-
-/** Generate a 14-digit timestamp compatible with Jade's os.date("%Y%m%d%H%M%S") */
-function jadeTimestamp(): string {
-  const now = new Date();
-  const pad = (n: number) => n.toString().padStart(2, "0");
-  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-}
+import { detectDriver, getDialect, type SQLDialect, type DriverKind } from "../core/sql-dialect.js";
 
 /* ─── DB introspection helpers ──────────────────────────────── */
 
-async function introspectDatabase(projectRoot: string): Promise<TableDef[]> {
-  const bridge = new LuaBridge();
-  const { configPath, envConfigPath } = getConfigPathForEnv(projectRoot);
+async function introspectDatabase(projectRoot: string, dialect: SQLDialect, driverKind: DriverKind): Promise<TableDef[]> {
+  const configPath = path.join(projectRoot, "jade.config.lua").replace(/\\/g, "\\\\");
 
+  // Get table list
   const listScript = `
-local jade = require("jade")
-${LUA_CONFIG_LOAD}
-jade.configure(_cfg)
-local rows = jade.driver():execute([[
-  SELECT table_name FROM information_schema.tables
-  WHERE table_schema = 'public' ORDER BY table_name
-]])
-local names = {}
-for _, r in ipairs(rows) do table.insert(names, r.table_name) end
-print(require("dkjson").encode(names))
+    local jade = require("jade")
+    local cfg = dofile("${configPath}")
+    jade.configure(cfg)
+    local rows = jade.driver():execute([[${dialect.tableListQuery()}]])
+    local names = {}
+    for _, r in ipairs(rows) do
+      ${tableListExtractor(driverKind)}
+    end
+    print(require("dkjson").encode(names))
   `;
 
-  const tableNames: string[] = await bridge.executeSafeJson(listScript, { configPath, envConfigPath });
+  const { stdout: tblOut } = await exec("lua", ["-e", listScript]);
+  const tableNames = JSON.parse(tblOut.trim()) as string[];
   const result: TableDef[] = [];
 
   for (const tname of tableNames) {
+    const colQuery = dialect.columnListQuery(tname);
     const colScript = `
-local jade = require("jade")
-${LUA_CONFIG_LOAD}
-jade.configure(_cfg)
-local cols = jade.driver():execute([[
-  SELECT column_name, data_type, character_maximum_length, is_nullable, column_default
-  FROM information_schema.columns
-  WHERE table_name = ']] .. ARGS.tname:gsub("'", "''") .. [[' AND table_schema = 'public'
-  ORDER BY ordinal_position
-]])
-print(require("dkjson").encode(cols))
+      local jade = require("jade")
+      local cfg = dofile("${configPath}")
+      jade.configure(cfg)
+      local cols = jade.driver():execute([[${colQuery}]])
+      print(require("dkjson").encode(cols))
     `;
 
-    const cols: any[] = await bridge.executeSafeJson(colScript, { configPath, envConfigPath, tname });
+    const { stdout: colOut } = await exec("lua", ["-e", colScript]);
+    const rawCols = JSON.parse(colOut.trim()) as any[];
 
-    if (cols.length === 0) continue;
+    if (rawCols.length === 0) continue;
 
-    const parsedCols: ColumnDef[] = cols.map((c) => ({
-      name: c.column_name,
-      type: normalizeColumnType(c.data_type),
-      length: c.character_maximum_length || undefined,
-      nullable: c.is_nullable !== "NO" ? true : undefined,
-      default: c.column_default,
-    }));
+    const parsedCols: ColumnDef[] = normalizeColumns(rawCols, driverKind);
 
-    // Get indexes for this table
-    const idxScript = `
-local jade = require("jade")
-${LUA_CONFIG_LOAD}
-jade.configure(_cfg)
-local rows = jade.driver():execute([[
-  SELECT indexname, indexdef
-  FROM pg_indexes
-  WHERE tablename = ']] .. ARGS.tname:gsub("'", "''") .. [[' AND schemaname = 'public'
-  ORDER BY indexname
-]])
-local result = {}
-for _, r in ipairs(rows) do
-  local unique = r.indexdef:match("UNIQUE") ~= nil
-  local cols_str = r.indexdef:match("%((.+)%)")
-  local cols = {}
-  if cols_str then
-    for col in cols_str:gmatch("[^,]+") do
-      col = col:match("^%s*(.-)%s*$")
-      table.insert(cols, col)
-    end
-  end
-  table.insert(result, { name = r.indexname, columns = cols, unique = unique })
-end
-print(require("dkjson").encode(result))
-    `;
-
-    let indexes: IndexDef[] = [];
-    try {
-      const idxResult: any[] = await bridge.executeSafeJson(idxScript, { configPath, envConfigPath, tname });
-      // Filter out primary key indexes (they're managed by the column definition)
-      indexes = idxResult
-        .filter((idx: any) => !idx.name.endsWith("_pkey"))
-        .map((idx: any) => ({
-          name: idx.name,
-          columns: idx.columns,
-          unique: idx.unique || undefined,
-        }));
-    } catch {
-      // Index introspection might fail on non-PostgreSQL drivers
-    }
-
-    result.push({ name: tname, columns: parsedCols, indexes: indexes.length > 0 ? indexes : undefined });
+    result.push({ name: tname, columns: parsedCols });
   }
 
   return result;
+}
+
+function tableListExtractor(driverKind: DriverKind): string {
+  if (driverKind === "sqlite") {
+    return "table.insert(names, r.table_name or r.name)";
+  }
+  return "table.insert(names, r.table_name)";
+}
+
+function normalizeColumns(raw: any[], driverKind: DriverKind): ColumnDef[] {
+  if (driverKind === "sqlite") {
+    return raw.map((c: any) => ({
+      name: c.name,
+      type: normalizeSqliteType(c.type),
+      length: extractLength(c.type) || undefined,
+      nullable: c.notnull !== 1 ? true : undefined,
+      default: c.dflt_value,
+    }));
+  }
+  return raw.map((c: any) => ({
+    name: c.column_name,
+    type: normalizeColumnType(c.data_type),
+    length: c.character_maximum_length || undefined,
+    nullable: c.is_nullable !== "NO" ? true : undefined,
+    default: c.column_default,
+  }));
+}
+
+function normalizeSqliteType(typeStr: string): string {
+  if (!typeStr) return "TEXT";
+  const upper = typeStr.toUpperCase();
+  if (upper.includes("INT")) return "INTEGER";
+  if (upper.includes("CHAR") || upper.includes("TEXT")) return "VARCHAR";
+  if (upper.includes("REAL") || upper.includes("FLOA") || upper.includes("DOUB")) return "FLOAT";
+  return "TEXT";
+}
+
+function extractLength(typeStr: string): number | null {
+  if (!typeStr) return null;
+  const match = typeStr.match(/\((\d+)\)/);
+  return match ? parseInt(match[1], 10) : null;
 }
 
 function normalizeColumnType(raw: string): string {
@@ -135,6 +121,8 @@ function normalizeColumnType(raw: string): string {
     uuid: "UUID",
     json: "JSON",
     jsonb: "JSONB",
+    datetime: "TIMESTAMP",
+    tinyint: "BOOLEAN",
   };
   return map[raw] || "TEXT";
 }
@@ -162,16 +150,7 @@ function parseLocalSchema(projectRoot: string): TableDef[] {
           length: c.length || undefined,
           nullable: !c.notNull ? true : undefined,
         }));
-        // Also generate implicit unique indexes from :unique() columns
-        const implicitIndexes: IndexDef[] = ent.columns
-          .filter(c => c.unique)
-          .map(c => ({
-            name: `${ent.tableName}_${c.name}_key`,
-            columns: [c.name],
-            unique: true,
-          }));
-        const allIndexes = [...(ent.indexes || []), ...implicitIndexes];
-        result.push({ name: ent.name, columns: cols, indexes: allIndexes.length > 0 ? allIndexes : undefined });
+        result.push({ name: ent.name, columns: cols });
       }
     } catch {
       Logger.warn(`  Could not parse ${file}, skipping`);
@@ -209,62 +188,50 @@ function formatDiff(diff: DiffResult): string[] {
     lines.push(`  ~ ${mc.table}.${mc.column.name} → ${mc.column.type}${mc.column.length ? `(${mc.column.length})` : ""}${!mc.column.nullable ? " NOT NULL" : ""}`);
   }
 
-  for (const ai of diff.addIndexes) {
-    lines.push(`  + INDEX ${ai.index.name} ON ${ai.table} (${ai.index.columns.join(", ")})${ai.index.unique ? " UNIQUE" : ""}`);
-  }
-
-  for (const di of diff.dropIndexes) {
-    lines.push(`  - INDEX ${di.index} ON ${di.table}`);
-  }
-
   return lines;
 }
 
-/* ─── Generate SQL from diff ────────────────────────────────── */
+/* ─── Generate SQL from diff using dialect ───────────────────── */
 
-function generateSyncSQL(diff: DiffResult): { upSql: string; downSql: string } {
+function generateSyncSQL(diff: DiffResult, dialect: SQLDialect): { upSql: string; downSql: string } {
   const upParts: string[] = [];
   const downParts: string[] = [];
+  const cascade = dialect.cascadeDrop();
 
+  // Create tables
   for (const t of diff.createTables) {
-    upParts.push(generateCreateTable(t));
-    downParts.push(`\n-- Drop created tables\nDROP TABLE IF EXISTS ${quote(t.name)} CASCADE;\n`);
+    upParts.push(generateCreateTableSQL(t, dialect));
+    downParts.push(`DROP TABLE IF EXISTS ${dialect.quoteIdentifier(t.name)}${cascade};`);
   }
 
+  // Add columns
   for (const ac of diff.addColumns) {
     upParts.push(
-      `ALTER TABLE ${quote(ac.table)} ADD COLUMN ${quote(ac.column.name)} ${toSQLType(ac.column)}${toSQLDefault(ac.column)}`
+      `ALTER TABLE ${dialect.quoteIdentifier(ac.table)} ADD COLUMN ${dialect.quoteIdentifier(ac.column.name)} ${dialect.mapType(ac.column.type, ac.column.length)}`
     );
-    downParts.push(`ALTER TABLE ${quote(ac.table)} DROP COLUMN IF EXISTS ${quote(ac.column.name)};\n`);
+    downParts.push(`ALTER TABLE ${dialect.quoteIdentifier(ac.table)} DROP COLUMN IF EXISTS ${dialect.quoteIdentifier(ac.column.name)};`);
   }
 
+  // Modify columns — simplified to drop+add
   for (const mc of diff.modifyColumns) {
     const col = mc.column;
     upParts.push(
-      `ALTER TABLE ${quote(mc.table)} DROP COLUMN IF EXISTS ${quote(col.name)}; ALTER TABLE ${quote(mc.table)} ADD COLUMN ${quote(col.name)} ${toSQLType(col)}${toSQLDefault(col)}`
+      `ALTER TABLE ${dialect.quoteIdentifier(mc.table)} DROP COLUMN IF EXISTS ${dialect.quoteIdentifier(col.name)};`
     );
-    downParts.push(`ALTER TABLE ${quote(mc.table)} DROP COLUMN IF EXISTS ${quote(col.name)};\n`);
+    upParts.push(
+      `ALTER TABLE ${dialect.quoteIdentifier(mc.table)} ADD COLUMN ${dialect.quoteIdentifier(col.name)} ${dialect.mapType(col.type, col.length)}`
+    );
+    downParts.push(`ALTER TABLE ${dialect.quoteIdentifier(mc.table)} DROP COLUMN IF EXISTS ${dialect.quoteIdentifier(col.name)};`);
   }
 
+  // Drop columns
   for (const dc of diff.dropColumns) {
-    upParts.push(`ALTER TABLE ${quote(dc.table)} DROP COLUMN IF EXISTS ${quote(dc.column)};`);
+    upParts.push(`ALTER TABLE ${dialect.quoteIdentifier(dc.table)} DROP COLUMN IF EXISTS ${dialect.quoteIdentifier(dc.column)};`);
   }
 
+  // Drop tables
   for (const tn of diff.dropTables) {
-    upParts.push(`DROP TABLE IF EXISTS ${quote(tn)} CASCADE;`);
-  }
-
-  // Index changes
-  for (const ai of diff.addIndexes) {
-    const unique = ai.index.unique ? "UNIQUE " : "";
-    const cols = ai.index.columns.map(c => quote(c)).join(", ");
-    upParts.push(`CREATE ${unique}INDEX ${quote(ai.index.name)} ON ${quote(ai.table)} (${cols});`);
-    downParts.push(`DROP INDEX IF EXISTS ${quote(ai.index.name)};`);
-  }
-
-  for (const di of diff.dropIndexes) {
-    upParts.push(`DROP INDEX IF EXISTS ${quote(di.index)};`);
-    // Down: would need original index definition — skip for now
+    upParts.push(`DROP TABLE IF EXISTS ${dialect.quoteIdentifier(tn)}${cascade};`);
   }
 
   return {
@@ -273,73 +240,30 @@ function generateSyncSQL(diff: DiffResult): { upSql: string; downSql: string } {
   };
 }
 
-function quote(name: string): string {
-  return `"${name.replace(/"/g, '""')}"`;
-}
-
-function toSQLType(col: ColumnDef): string {
-  switch (col.type.toUpperCase()) {
-    case "INTEGER":
-      return "INTEGER";
-    case "BIGINT":
-      return "BIGINT";
-    case "SERIAL":
-      return "SERIAL";
-    case "VARCHAR":
-      return `VARCHAR(${col.length || 255})`;
-    case "TEXT":
-      return "TEXT";
-    case "FLOAT":
-      return "DOUBLE PRECISION";
-    case "DECIMAL":
-      return `DECIMAL(10,2)`;
-    case "BOOLEAN":
-      return "BOOLEAN";
-    case "TIMESTAMP":
-      return "TIMESTAMP";
-    case "TIMESTAMPTZ":
-      return "TIMESTAMPTZ";
-    case "DATE":
-      return "DATE";
-    case "UUID":
-      return "UUID";
-    case "JSON":
-      return "JSON";
-    case "JSONB":
-      return "JSONB";
-    default:
-      return "TEXT";
-  }
-}
-
-function toSQLDefault(col: ColumnDef): string {
-  if (col.default == null) return "";
-  if (typeof col.default === "string") {
-    return ` DEFAULT '${col.default.replace(/'/g, "''")}'`;
-  }
-  return ` DEFAULT ${col.default}`;
-}
-
-function generateCreateTable(table: TableDef): string {
+function generateCreateTableSQL(table: TableDef, dialect: SQLDialect): string {
   const parts: string[] = [
-    `CREATE TABLE IF NOT EXISTS ${quote(table.name)} (\n`,
+    `CREATE TABLE IF NOT EXISTS ${dialect.quoteIdentifier(table.name)} (\n`,
   ];
 
   for (let i = 0; i < table.columns.length; i++) {
     const c = table.columns[i];
-    let line = `    ${quote(c.name)} ${toSQLType(c)}`;
+    let line = `    ${dialect.quoteIdentifier(c.name)} ${dialect.mapType(c.type, c.length)}`;
 
     if (!c.nullable && !(c.default != null)) {
       line += " NOT NULL";
     }
 
-    line += toSQLDefault(c);
+    if (c.default != null) {
+      line += ` DEFAULT ${dialect.mapDefault(c.default, c.type)}`;
+    }
+
     parts.push(line + ",");
   }
 
+  // Primary key on first column if it looks like an ID
   const pkCol = table.columns.find((c) => /id$/i.test(c.name));
   if (pkCol) {
-    parts.push(`    PRIMARY KEY (${quote(pkCol.name)})`);
+    parts.push(`    PRIMARY KEY (${dialect.quoteIdentifier(pkCol.name)})`);
   }
 
   parts.push("\n);\n");
@@ -353,18 +277,17 @@ function joinStatements(parts: string[]): string {
 /* ─── Run migration via Lua ─────────────────────────────────── */
 
 async function runMigrateScript(projectRoot: string, fileName: string): Promise<boolean> {
-  const bridge = new LuaBridge();
   const migrationsDir = path.join(projectRoot, "migrations");
-  const { configPath, envConfigPath } = getConfigPathForEnv(projectRoot);
+  const configPath = path.join(projectRoot, "jade.config.lua");
   const migPath = path.join(migrationsDir, fileName);
 
-  const script = `
+  const singleLineScript = `
 local jade = require("jade")
-${LUA_CONFIG_LOAD}
-jade.configure(_cfg)
+local cfg = dofile("${configPath.replace(/\\/g, "\\\\")}")
+jade.configure(cfg)
 local driver = jade.driver()
 
-local f = io.open(ARGS.migPath, "r")
+local f = io.open("${migPath.replace(/\\/g, "\\\\")}", "r")
 if not f then
   print("ERROR: Cannot read migration file")
   os.exit(1)
@@ -380,14 +303,14 @@ for stmt in sql:gmatch("[^;]+;?") do
       print("ERROR: " .. tostring(err))
       os.exit(1)
     end
-    print("  ✓ Applied: " .. trimmed:sub(1, 60))
+    print("  Applied: " .. trimmed:sub(1, 60))
   end
 end
 print("OK")
-  `;
+`;
 
   try {
-    await bridge.executeSafe(script, { configPath, envConfigPath, migPath });
+    await exec("lua", ["-e", singleLineScript]);
     return true;
   } catch {
     return false;
@@ -408,20 +331,26 @@ async function runSync(options: SyncOptions): Promise<void> {
     throw AppError.notInitialized();
   }
 
+  /* ── Security: block production ── */
   if (process.env.JADE_ENV === "production") {
-    throw new AppError(
-      "SYNC_BLOCKED_IN_PRODUCTION",
-      "db sync is not allowed in production environment.",
-      "Use 'esmeralda migrate' instead."
-    );
+    Logger.error("db sync is not allowed in production environment.");
+    Logger.info("Use 'esmeralda migrate' instead.");
+    process.exit(1);
   }
 
-  Logger.info("Introspecting current database schema...");
-  const currentDb: TableDef[] = await introspectDatabase(projectRoot);
+  const driverKind = detectDriver(projectRoot);
+  const dialect = getDialect(driverKind);
+  Logger.info(`Detected driver: ${driverKind}`);
 
+  /* ── 1. Introspect current DB schema ── */
+  Logger.info("Introspecting current database schema...");
+  const currentDb: TableDef[] = await introspectDatabase(projectRoot, dialect, driverKind);
+
+  /* ── 2. Parse local schema files ── */
   Logger.info("Reading local schema files from schema/...");
   const desiredSchema: TableDef[] = parseLocalSchema(projectRoot);
 
+  /* ── 3. Compute diff ── */
   const engine = new DiffEngine();
   const diff = engine.compute(desiredSchema, currentDb);
 
@@ -430,6 +359,7 @@ async function runSync(options: SyncOptions): Promise<void> {
     return;
   }
 
+  /* ── 4. Display differences ── */
   Logger.info("");
   Logger.info("Differences found:");
   const diffLines = formatDiff(diff);
@@ -443,12 +373,14 @@ async function runSync(options: SyncOptions): Promise<void> {
     return;
   }
 
+  /* ── 5. Generate migration SQL & file ── */
   Logger.info("");
   Logger.info("Generating migration...");
 
-  const { upSql, downSql } = generateSyncSQL(diff);
-  const timestamp = jadeTimestamp();
+  const { upSql, downSql } = generateSyncSQL(diff, dialect);
+  const timestamp = Date.now().toString().slice(0, 14);
 
+  // Generate descriptive name from diff
   const parts: string[] = [];
   if (diff.createTables.length > 0) parts.push("create_" + diff.createTables.map(t => t.name).join("_"));
   if (diff.dropTables.length > 0) parts.push("remove_" + diff.dropTables.join("_"));
@@ -466,11 +398,12 @@ async function runSync(options: SyncOptions): Promise<void> {
   ensureDir(migrationsDir);
 
   const fullPath = path.join(migrationsDir, fileName);
-  const migrationContent = `-- Auto-generated by 'esmeralda db sync'\n-- Generated at: ${new Date().toISOString()}\n\nM.up = function()\n${indent(upSql, "    ")}\nend\n\nM.down = function()\n${indent(downSql, "    ")}\nend\n`;
+  const migrationContent = `-- Auto-generated by 'esmeralda db sync'\n-- Generated at: ${new Date().toISOString()}\n-- Driver: ${driverKind}\n\nM.up = function()\n${indent(upSql, "    ")}\nend\n\nM.down = function()\n${indent(downSql, "    ")}\nend\n`;
 
   fs.writeFileSync(fullPath, migrationContent, "utf-8");
   Logger.info(`  Created migrations/${fileName}`);
 
+  /* ── 6. Apply (or prompt) ── */
   if (options.force) {
     Logger.info("Applying migration (--force)...");
   } else {
@@ -482,6 +415,7 @@ async function runSync(options: SyncOptions): Promise<void> {
     }
   }
 
+  /* ── 7. Execute migration ── */
   Logger.info("Applying migration...");
   const success = await runMigrateScript(projectRoot, fileName);
 
@@ -503,6 +437,7 @@ function indent(text: string, prefix: string): string {
 
 function promptYesNo(question: string): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
+    const readline = require("readline");
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     rl.question(`${question} [y/N]: `, (answer: string) => {
       const yes = answer.trim().toLowerCase() === "y";
@@ -523,8 +458,16 @@ export function registerDbSync(db: Command): void {
     .action(async (options: SyncOptions) => {
       try {
         await runSync(options);
-      } catch (error: unknown) {
-        handleError(error);
+      } catch (error: any) {
+        if (error instanceof AppError) {
+          Logger.error(error.message);
+          if (error.suggestion) Logger.info(`Suggestion: ${error.suggestion}`);
+        } else {
+          Logger.error("db sync failed:");
+          Logger.error(error.message);
+        }
+        if (process.env.DEBUG) console.error(error.stack);
+        process.exit(1);
       }
     });
 }

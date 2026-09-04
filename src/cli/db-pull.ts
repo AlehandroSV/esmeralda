@@ -1,12 +1,15 @@
 import { Command } from "commander";
 import * as fs from "fs";
 import * as path from "path";
-import { Logger, AppError, handleError } from "../utils/logger.js";
+import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { parseSchemaFile } from "../core/schema-parser.js";
 import { saveState } from "../core/schema-state.js";
-import { LuaBridge } from "../core/lua-bridge.js";
-import { getConfigPathForEnv, LUA_CONFIG_LOAD } from "../core/config.js";
+import { detectDriver, getDialect, type SQLDialect, type DriverKind } from "../core/sql-dialect.js";
+import { execFile } from "child_process";
+import { promisify } from "util";
+
+const exec = promisify(execFile);
 
 export function registerDbPull(db: Command): void {
   db
@@ -21,28 +24,31 @@ export function registerDbPull(db: Command): void {
           throw AppError.notInitialized();
         }
 
-        Logger.info("Introspecting database...");
+        const driverKind = detectDriver(projectRoot);
+        const dialect = getDialect(driverKind);
+        Logger.info(`Introspecting database (${driverKind})...`);
 
-        const bridge = new LuaBridge();
-        const { configPath, envConfigPath } = getConfigPathForEnv(projectRoot);
+        const configPath = path.join(projectRoot, "jade.config.lua").replace(/\\/g, "\\\\");
 
-        // Get table list
+        // Get table list using dialect-specific query
         const listScript = `
-local jade = require("jade")
-${LUA_CONFIG_LOAD}
-jade.configure(_cfg)
-local tables = jade.driver():execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name")
-local result = {}
-for _, row in ipairs(tables) do
-    table.insert(result, row.table_name)
-end
-print(require("dkjson").encode(result))
+          local jade = require("jade")
+          local config = dofile("${configPath}")
+          jade.configure(config)
+          local tables = jade.driver():execute([[${dialect.tableListQuery()}]])
+          local result = {}
+          for _, row in ipairs(tables) do
+            ${tableListExtractor(driverKind)}
+          end
+          print(require("dkjson").encode(result))
         `;
 
-        const tables: string[] = await bridge.executeSafeJson(listScript, { configPath, envConfigPath });
+        const { stdout } = await exec("lua", ["-e", listScript]);
+        const tables = JSON.parse(stdout.trim());
 
         Logger.info(`Found ${tables.length} tables`);
 
+        // Generate entity files for each table
         const schemaDir = path.join(projectRoot, "schema");
         fs.mkdirSync(schemaDir, { recursive: true });
 
@@ -51,55 +57,38 @@ print(require("dkjson").encode(result))
 
           Logger.info(`  Generating entity: ${tableName}`);
 
-          // Get columns for this table — pass tableName via ARGS to avoid injection
+          // Get columns using dialect-specific query
+          const columnQuery = dialect.columnListQuery(tableName);
           const columnScript = `
-local jade = require("jade")
-${LUA_CONFIG_LOAD}
-jade.configure(_cfg)
-local cols = jade.driver():execute("SELECT column_name, data_type, character_maximum_length, is_nullable, column_default FROM information_schema.columns WHERE table_name = '" .. ARGS.tableName:gsub("'", "''") .. "' ORDER BY ordinal_position")
-print(require("dkjson").encode(cols))
+            local jade = require("jade")
+            local config = dofile("${configPath}")
+            jade.configure(config)
+            local cols = jade.driver():execute([[${columnQuery}]])
+            print(require("dkjson").encode(cols))
           `;
 
-          const columns: any[] = await bridge.executeSafeJson(columnScript, {
-            configPath,
-            envConfigPath,
-            tableName,
-          });
+          const { stdout: colOutput } = await exec("lua", ["-e", columnScript]);
+          const rawColumns = JSON.parse(colOutput.trim());
+          const columns = normalizeColumns(rawColumns, driverKind);
 
-          // Get foreign keys for this table
+          // Get foreign keys using dialect-specific query
           let foreignKeys: any[] = [];
           try {
+            const fkQuery = dialect.foreignKeyQuery(tableName);
             const fkScript = `
-local jade = require("jade")
-${LUA_CONFIG_LOAD}
-jade.configure(_cfg)
-local fks = jade.driver():execute([[
-  SELECT
-    tc.constraint_name,
-    kcu.column_name,
-    ccu.table_name AS foreign_table_name,
-    ccu.column_name AS foreign_column_name
-  FROM information_schema.table_constraints AS tc
-  JOIN information_schema.key_column_usage AS kcu
-    ON tc.constraint_name = kcu.constraint_name
-  JOIN information_schema.constraint_column_usage AS ccu
-    ON ccu.constraint_name = tc.constraint_name
-  WHERE tc.constraint_type = 'FOREIGN KEY'
-  AND tc.table_name = ']] .. ARGS.tableName:gsub("'", "''") .. [['
-  AND tc.table_schema = 'public'
-]])
-print(require("dkjson").encode(fks))
+              local jade = require("jade")
+              local config = dofile("${configPath}")
+              jade.configure(config)
+              local fks = jade.driver():execute([[${fkQuery}]])
+              print(require("dkjson").encode(fks))
             `;
-
-            foreignKeys = await bridge.executeSafeJson(fkScript, {
-              configPath,
-              envConfigPath,
-              tableName,
-            });
+            const { stdout: fkOutput } = await exec("lua", ["-e", fkScript]);
+            foreignKeys = normalizeForeignKeys(JSON.parse(fkOutput.trim()), driverKind);
           } catch {
             // Foreign keys query might fail, continue without them
           }
 
+          // Generate Lua entity file
           const entityName = tableName.charAt(0).toUpperCase() + tableName.slice(1);
           const luaContent = generateEntityLua(entityName, tableName, columns, foreignKeys);
 
@@ -125,11 +114,91 @@ print(require("dkjson").encode(fks))
         }
 
         Logger.success("Entity files generated in schema/");
-      } catch (error: unknown) {
-        handleError(error);
+      } catch (error: any) {
+        if (error instanceof AppError) {
+          Logger.error(error.message);
+          if (error.suggestion) {
+            Logger.info(`Suggestion: ${error.suggestion}`);
+          }
+        } else {
+          Logger.error("Failed to introspect database:");
+          Logger.error(error.message);
+        }
+        if (process.env.DEBUG) {
+          console.error(error.stack);
+        }
+        process.exit(1);
       }
     });
 }
+
+/* ─── Normalization helpers ─────────────────────────────────── */
+
+interface NormalizedColumn {
+  column_name: string;
+  data_type: string;
+  character_maximum_length: number | null;
+  is_nullable: string;
+  column_default: string | null;
+}
+
+function tableListExtractor(driverKind: DriverKind): string {
+  if (driverKind === "sqlite") {
+    return "table.insert(result, row.table_name or row.name)";
+  }
+  return "table.insert(result, row.table_name)";
+}
+
+function normalizeColumns(raw: any[], driverKind: DriverKind): NormalizedColumn[] {
+  if (driverKind === "sqlite") {
+    // SQLite PRAGMA table_info returns: cid, name, type, notnull, dflt_value, pk
+    return raw.map((c: any) => ({
+      column_name: c.name,
+      data_type: normalizeSqliteType(c.type),
+      character_maximum_length: extractLength(c.type),
+      is_nullable: c.notnull === 1 ? "NO" : "YES",
+      column_default: c.dflt_value,
+    }));
+  }
+  // PostgreSQL and MySQL return information_schema format directly
+  return raw;
+}
+
+function normalizeSqliteType(typeStr: string): string {
+  if (!typeStr) return "text";
+  const upper = typeStr.toUpperCase();
+  if (upper.includes("INT")) return "integer";
+  if (upper.includes("CHAR") || upper.includes("CLOB") || upper.includes("TEXT")) return "text";
+  if (upper.includes("BLOB")) return "blob";
+  if (upper.includes("REAL") || upper.includes("FLOA") || upper.includes("DOUB")) return "real";
+  return "text";
+}
+
+function extractLength(typeStr: string): number | null {
+  if (!typeStr) return null;
+  const match = typeStr.match(/\((\d+)\)/);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+interface NormalizedForeignKey {
+  column_name: string;
+  foreign_table_name: string;
+  foreign_column_name: string;
+}
+
+function normalizeForeignKeys(raw: any[], driverKind: DriverKind): NormalizedForeignKey[] {
+  if (driverKind === "sqlite") {
+    // SQLite PRAGMA foreign_key_list returns: id, seq, table, from, to, on_update, on_delete, match
+    return raw.map((fk: any) => ({
+      column_name: fk.from,
+      foreign_table_name: fk.table,
+      foreign_column_name: fk.to,
+    }));
+  }
+  return raw;
+}
+
+/* ─── Entity generation ─────────────────────────────────────── */
 
 function generateEntityLua(entityName: string, tableName: string, columns: any[], foreignKeys: any[]): string {
   const lines: string[] = [];
@@ -158,15 +227,19 @@ function generateEntityLua(entityName: string, tableName: string, columns: any[]
       "timestamp with time zone": "Timestamp",
       "timestamp without time zone": "Timestamp",
       "timestamp":   "Timestamp",
+      "datetime":    "Timestamp",
       "uuid":        "UUID",
       "json":        "JSON",
       "jsonb":       "JSON",
       "enum":        "Enum",
+      "tinyint":     "Boolean",
+      "blob":        "Text",
     };
 
     const typeName = typeMap[col.data_type] || "Text";
     let colDef = `    ${col.column_name} = Jade.${typeName}()`;
 
+    // Detect CUID (varchar(25)) and NanoID (varchar(21)) by column name heuristics
     if (typeName === "String" && col.character_maximum_length === 25) {
       if (/^(id|cuid)$/.test(col.column_name)) {
         colDef = `    ${col.column_name} = Jade.CUID():primaryKey()`;
@@ -195,13 +268,6 @@ function generateEntityLua(entityName: string, tableName: string, columns: any[]
       }
     } else if (col.column_default === "true" || col.column_default === "false") {
       colDef += `:default(${col.column_default})`;
-    } else if (col.column_default && (col.column_default.includes("now()") || col.column_default.includes("CURRENT_TIMESTAMP"))) {
-      colDef += ":defaultNow()";
-    } else if (col.column_default && !col.column_default.includes("nextval")) {
-      const defaultVal = col.column_default.replace(/::[\w\s]+$/, "").replace(/^'|'$/g, "");
-      if (defaultVal && defaultVal !== "NULL") {
-        colDef += `:default("${defaultVal}")`;
-      }
     }
 
     lines.push(colDef + ",");
@@ -209,9 +275,10 @@ function generateEntityLua(entityName: string, tableName: string, columns: any[]
 
   lines.push(`})`);
 
+  // Add relations based on foreign keys
   if (foreignKeys.length > 0) {
     lines.push(``);
-    lines.push(`-- Relations (uncomment and adjust as needed)`);
+    lines.push(`-- Relations`);
 
     for (const fk of foreignKeys) {
       const foreignEntity = fk.foreign_table_name.charAt(0).toUpperCase() + fk.foreign_table_name.slice(1, -1);
