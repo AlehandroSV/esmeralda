@@ -10,6 +10,12 @@ export interface ColumnDef {
   notNull?: boolean;
   default?: any;
   references?: { table: string; column: string };
+  /** Enum values, e.g. ["pending", "approved", "rejected"] */
+  enumValues?: string[];
+  /** When true, use cuid() / 'cuid'::text as default (like Jade.CUID) */
+  cuidDefault?: boolean;
+  /** When true, use nanoid() / 'nanoid'::text as default (like Jade.NanoID) */
+  nanoidDefault?: boolean;
 }
 
 export interface EntityDef {
@@ -79,8 +85,18 @@ function parseColumns(block: string): ColumnDef[] {
       const length = parseInt(args.trim(), 10);
       if (!isNaN(length)) {
         column.length = length;
+      } else {
+        // Enum values: parse comma-separated quoted strings
+        const quotedValues = args.match(/['"]([^'"]*)['"]/g);
+        if (quotedValues) {
+          column.enumValues = quotedValues.map((v) => v.slice(1, -1));
+        }
       }
     }
+
+    // Detect CUID and NanoID by type name — no args, but they auto-generate IDs
+    if (typeName === "CUID") column.cuidDefault = true;
+    if (typeName === "NanoID") column.nanoidDefault = true;
 
     // Parse modifiers
     if (modifiers) {
@@ -109,19 +125,22 @@ function parseColumns(block: string): ColumnDef[] {
   return columns;
 }
 
-function mapType(typeName: string): string {
+export function mapType(typeName: string): string {
   const typeMap: Record<string, string> = {
-    "String": "VARCHAR",
-    "Text": "TEXT",
-    "Integer": "INTEGER",
-    "BigInt": "BIGINT",
-    "Float": "FLOAT",
-    "Decimal": "DECIMAL",
-    "Boolean": "BOOLEAN",
-    "Timestamp": "TIMESTAMP",
-    "Date": "DATE",
-    "UUID": "UUID",
-    "JSON": "JSON",
+    "String":   "VARCHAR",
+    "Text":     "TEXT",
+    "Integer":  "INTEGER",
+    "BigInt":   "BIGINT",
+    "Float":    "FLOAT",
+    "Decimal":  "DECIMAL",
+    "Boolean":  "BOOLEAN",
+    "Timestamp":"TIMESTAMP",
+    "Date":     "DATE",
+    "UUID":     "UUID",
+    "JSON":     "JSON",
+    "CUID":     "VARCHAR(25)",
+    "NanoID":   "VARCHAR(21)",
+    "Enum":     "VARCHAR",
   };
 
   return typeMap[typeName] || "TEXT";

@@ -5,10 +5,7 @@ import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { parseSchemaFile } from "../core/schema-parser.js";
 import { saveState } from "../core/schema-state.js";
-import { execFile } from "child_process";
-import { promisify } from "util";
-
-const exec = promisify(execFile);
+import { LuaBridge, validateLuaIdentifier } from "../core/lua-bridge.js";
 
 export function registerDbPull(db: Command): void {
   db
@@ -25,26 +22,26 @@ export function registerDbPull(db: Command): void {
 
         Logger.info("Introspecting database...");
 
-        const script = `
-          local jade = require("jade")
-          local config = dofile("${path.join(projectRoot, "jade.config.lua").replace(/\\/g, "\\\\")}")
-          jade.configure(config)
+        const bridge = new LuaBridge();
+        const configPath = path.join(projectRoot, "jade.config.lua");
 
-          -- Get table list from database
-          local tables = jade.driver():execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name")
-          local result = {}
-          for _, row in ipairs(tables) do
-              table.insert(result, row.table_name)
-          end
-          print(jade.util.inflection and require("dkjson").encode(result) or "[]")
+        // Get table list
+        const listScript = `
+local jade = require("jade")
+local config = dofile(ARGS.configPath)
+jade.configure(config)
+local tables = jade.driver():execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name")
+local result = {}
+for _, row in ipairs(tables) do
+    table.insert(result, row.table_name)
+end
+print(require("dkjson").encode(result))
         `;
 
-        const { stdout } = await exec("lua", ["-e", script]);
-        const tables = JSON.parse(stdout.trim());
+        const tables: string[] = await bridge.executeSafeJson(listScript, { configPath });
 
         Logger.info(`Found ${tables.length} tables`);
 
-        // Generate entity files for each table
         const schemaDir = path.join(projectRoot, "schema");
         fs.mkdirSync(schemaDir, { recursive: true });
 
@@ -53,50 +50,53 @@ export function registerDbPull(db: Command): void {
 
           Logger.info(`  Generating entity: ${tableName}`);
 
-          // Get columns for this table
+          // Get columns for this table — pass tableName via ARGS to avoid injection
           const columnScript = `
-            local jade = require("jade")
-            local config = dofile("${path.join(projectRoot, "jade.config.lua").replace(/\\/g, "\\\\")}")
-            jade.configure(config)
-            local cols = jade.driver():execute("SELECT column_name, data_type, character_maximum_length, is_nullable, column_default FROM information_schema.columns WHERE table_name = '${tableName}' ORDER BY ordinal_position")
-            print(require("dkjson").encode(cols))
+local jade = require("jade")
+local config = dofile(ARGS.configPath)
+jade.configure(config)
+local cols = jade.driver():execute("SELECT column_name, data_type, character_maximum_length, is_nullable, column_default FROM information_schema.columns WHERE table_name = '" .. ARGS.tableName:gsub("'", "''") .. "' ORDER BY ordinal_position")
+print(require("dkjson").encode(cols))
           `;
 
-          const { stdout: colOutput } = await exec("lua", ["-e", columnScript]);
-          const columns = JSON.parse(colOutput.trim());
+          const columns: any[] = await bridge.executeSafeJson(columnScript, {
+            configPath,
+            tableName,
+          });
 
           // Get foreign keys for this table
-          const fkScript = `
-            local jade = require("jade")
-            local config = dofile("${path.join(projectRoot, "jade.config.lua").replace(/\\/g, "\\\\")}")
-            jade.configure(config)
-            local fks = jade.driver():execute([[
-              SELECT
-                tc.constraint_name,
-                kcu.column_name,
-                ccu.table_name AS foreign_table_name,
-                ccu.column_name AS foreign_column_name
-              FROM information_schema.table_constraints AS tc
-              JOIN information_schema.key_column_usage AS kcu
-                ON tc.constraint_name = kcu.constraint_name
-              JOIN information_schema.constraint_column_usage AS ccu
-                ON ccu.constraint_name = tc.constraint_name
-              WHERE tc.constraint_type = 'FOREIGN KEY'
-              AND tc.table_name = '${tableName}'
-              AND tc.table_schema = 'public'
-            ]])
-            print(require("dkjson").encode(fks))
-          `;
-
           let foreignKeys: any[] = [];
           try {
-            const { stdout: fkOutput } = await exec("lua", ["-e", fkScript]);
-            foreignKeys = JSON.parse(fkOutput.trim());
+            const fkScript = `
+local jade = require("jade")
+local config = dofile(ARGS.configPath)
+jade.configure(config)
+local fks = jade.driver():execute([[
+  SELECT
+    tc.constraint_name,
+    kcu.column_name,
+    ccu.table_name AS foreign_table_name,
+    ccu.column_name AS foreign_column_name
+  FROM information_schema.table_constraints AS tc
+  JOIN information_schema.key_column_usage AS kcu
+    ON tc.constraint_name = kcu.constraint_name
+  JOIN information_schema.constraint_column_usage AS ccu
+    ON ccu.constraint_name = tc.constraint_name
+  WHERE tc.constraint_type = 'FOREIGN KEY'
+  AND tc.table_name = ']] .. ARGS.tableName:gsub("'", "''") .. [['
+  AND tc.table_schema = 'public'
+]])
+print(require("dkjson").encode(fks))
+            `;
+
+            foreignKeys = await bridge.executeSafeJson(fkScript, {
+              configPath,
+              tableName,
+            });
           } catch {
             // Foreign keys query might fail, continue without them
           }
 
-          // Generate Lua entity file
           const entityName = tableName.charAt(0).toUpperCase() + tableName.slice(1);
           const luaContent = generateEntityLua(entityName, tableName, columns, foreignKeys);
 
@@ -149,31 +149,48 @@ function generateEntityLua(entityName: string, tableName: string, columns: any[]
 
   for (const col of columns) {
     const typeMap: Record<string, string> = {
-      "integer": "Integer",
-      "bigint": "Integer",
-      "smallint": "Integer",
-      "serial": "Integer",
-      "bigserial": "Integer",
-      "numeric": "Decimal",
-      "real": "Float",
+      "integer":     "Integer",
+      "bigint":      "BigInt",
+      "smallint":    "Integer",
+      "serial":      "Integer",
+      "bigserial":   "BigInt",
+      "numeric":     "Decimal",
+      "decimal":     "Decimal",
+      "real":        "Float",
       "double precision": "Float",
-      "varchar": "String",
+      "varchar":     "String",
       "character varying": "String",
-      "text": "Text",
-      "boolean": "Boolean",
-      "date": "Date",
+      "text":        "Text",
+      "char":        "String",
+      "boolean":     "Boolean",
+      "date":        "Date",
       "timestamp with time zone": "Timestamp",
       "timestamp without time zone": "Timestamp",
-      "timestamp": "Timestamp",
-      "uuid": "UUID",
-      "json": "JSON",
-      "jsonb": "JSON",
+      "timestamp":   "Timestamp",
+      "uuid":        "UUID",
+      "json":        "JSON",
+      "jsonb":       "JSON",
+      "enum":        "Enum",
     };
 
     const typeName = typeMap[col.data_type] || "Text";
     let colDef = `    ${col.column_name} = Jade.${typeName}()`;
 
-    if (col.character_maximum_length && typeName === "String") {
+    if (typeName === "String" && col.character_maximum_length === 25) {
+      if (/^(id|cuid)$/.test(col.column_name)) {
+        colDef = `    ${col.column_name} = Jade.CUID():primaryKey()`;
+      } else {
+        colDef = `    ${col.column_name} = Jade.String(${col.character_maximum_length})`;
+      }
+    }
+    if (typeName === "String" && col.character_maximum_length === 21) {
+      colDef = `    ${col.column_name} = Jade.NanoID():unique()`;
+    }
+    if (typeName === "Enum") {
+      colDef = `    ${col.column_name} = Jade.Enum(/* TODO: specify values */)`;
+    }
+
+    if (col.character_maximum_length && typeName === "String" && !col.cuidDefault && !col.nanoidDefault) {
       colDef = `    ${col.column_name} = Jade.String(${col.character_maximum_length})`;
     }
 
@@ -182,7 +199,9 @@ function generateEntityLua(entityName: string, tableName: string, columns: any[]
     }
 
     if (col.column_default && col.column_default.includes("nextval")) {
-      colDef += ":primaryKey()";
+      if (!/^(id|cuid)$/.test(col.column_name) || col.character_maximum_length !== 25) {
+        colDef += ":primaryKey()";
+      }
     } else if (col.column_default === "true" || col.column_default === "false") {
       colDef += `:default(${col.column_default})`;
     }
@@ -192,13 +211,11 @@ function generateEntityLua(entityName: string, tableName: string, columns: any[]
 
   lines.push(`})`);
 
-  // Add relations based on foreign keys
   if (foreignKeys.length > 0) {
     lines.push(``);
     lines.push(`-- Relations`);
 
     for (const fk of foreignKeys) {
-      // Infer entity name from foreign table
       const foreignEntity = fk.foreign_table_name.charAt(0).toUpperCase() + fk.foreign_table_name.slice(1, -1);
       lines.push(`-- ${entityName}:belongsTo(${foreignEntity}, { foreign_key = "${fk.column_name}" })`);
     }

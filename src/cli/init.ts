@@ -5,6 +5,7 @@ import * as readline from "readline";
 import { Logger } from "../utils/logger.js";
 import { ensureDir, writeFile, fileExists } from "../core/file-manager.js";
 import { createEmptyState } from "../core/schema-state.js";
+import { escapeLuaString } from "../core/lua-bridge.js";
 
 interface InitOptions {
   name?: string;
@@ -920,16 +921,6 @@ export function promptUser(projectName: string): Promise<DatabaseConfig> {
       rl.close();
     }
   });
-}
-
-/** Escape a string for safe embedding in a Lua string literal */
-function escapeLuaString(str: string): string {
-  return str
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/'/g, "\\'")
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r");
 }
 
 export function generateConfigContent(projectName: string, config: DatabaseConfig): string {

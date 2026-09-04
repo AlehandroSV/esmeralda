@@ -117,6 +117,14 @@ export class AppError extends Error {
     );
   }
 
+  static seedNameRequired(): AppError {
+    return new AppError(
+      "SEED_NAME_REQUIRED",
+      "Please provide a seed name.",
+      "Usage: esmeralda db seed-create <name>"
+    );
+  }
+
   static dockerNotAvailable(): AppError {
     return new AppError(
       "DOCKER_NOT_AVAILABLE",
