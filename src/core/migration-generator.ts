@@ -1,46 +1,21 @@
 import { EntityDef, ColumnDef } from "./schema-parser.js";
+import { SQLDialect } from "./sql-dialect.js";
 
-/** Escape a string for safe embedding in a SQL identifier (double-quote quoting) */
-function quoteIdentifier(name: string): string {
-  return '"' + name.replace(/"/g, '""') + '"';
-}
-
+/**
+ * Generate Jade DDL API calls for a migration.
+ * Uses Jade.createTable / Jade.dropTable / Jade.addColumn / Jade.dropColumn
+ * instead of raw SQL — driver-agnostic.
+ */
 export function generateMigration(entities: EntityDef[], direction: "up" | "down"): string {
   const lines: string[] = [];
 
   if (direction === "up") {
-    // Collect all ENUM types first — they must be created before tables reference them
-    const enumDefs: string[] = [];
-    for (const entity of entities) {
-      for (const col of entity.columns) {
-        if (col.enumValues) {
-          const typeName = `enum_${entity.tableName}_${col.name}`;
-          enumDefs.push(
-            `    jade.driver():execute([[CREATE TYPE ${quoteIdentifier(typeName)} AS ENUM (${col.enumValues.map(v => `'${v.replace(/'/g, "''")}'`).join(', ')});]])`
-          );
-        }
-      }
-    }
-    if (enumDefs.length > 0) {
-      lines.push(enumDefs.join("\n"));
-    }
-
     for (const entity of entities) {
       lines.push(generateCreateTable(entity));
     }
   } else {
-    // Down migration drops tables in reverse order, then drops enums
     for (const entity of [...entities].reverse()) {
-      lines.push(`    jade.driver():execute("DROP TABLE IF EXISTS ${quoteIdentifier(entity.tableName)} CASCADE")`);
-    }
-    // Drop enum types in original order
-    for (const entity of entities) {
-      for (const col of entity.columns) {
-        if (col.enumValues) {
-          const typeName = `enum_${entity.tableName}_${col.name}`;
-          lines.push(`    jade.driver():execute("DROP TYPE IF EXISTS ${quoteIdentifier(typeName)}")`);
-        }
-      }
+      lines.push(`    Jade.dropTable("${entity.tableName}")`);
     }
   }
 
@@ -51,64 +26,114 @@ function generateCreateTable(entity: EntityDef): string {
   const colDefs: string[] = [];
 
   for (const col of entity.columns) {
-    let def: string;
+    let def = `        ${col.name} = ${getColumnType(col)}`;
 
-    // Integer primary keys become SERIAL (auto-increment)
-    if (col.primaryKey && col.type === "BIGINT") {
-      def = `        ${quoteIdentifier(col.name)} BIGSERIAL PRIMARY KEY`;
-    } else if (col.primaryKey && col.type === "INTEGER") {
-      def = `        ${quoteIdentifier(col.name)} SERIAL PRIMARY KEY`;
-    } else {
-      def = `        ${quoteIdentifier(col.name)} ${getSQLType(col)}`;
-      if (col.primaryKey) def += " PRIMARY KEY";
-      if (col.notNull && !col.primaryKey) def += " NOT NULL";
-      if (col.unique) def += " UNIQUE";
-      if (col.default !== undefined) {
-        def += ` DEFAULT ${getSQLDefault(col)}`;
-      } else if (col.cuidDefault) {
-        // Jade.CUID generates cuid() at runtime — no DB-level default needed
-        // but document it via comment so generated migrations are clear
-        def += "";  // cuid is handled by Jade's entity system, not the DB
-      } else if (col.nanoidDefault) {
-        // Same as CUID — nanoid() is generated at runtime
-        def += "";
-      }
+    const modifiers: string[] = [];
+    if (col.primaryKey) modifiers.push("primaryKey()");
+    if (col.unique) modifiers.push("unique()");
+    if (col.notNull && !col.primaryKey) modifiers.push("notNull()");
 
-      // Add CHECK constraint for ENUM columns when column type is VARCHAR without explicit enum type
-      if (col.enumValues && col.enumValues.length > 0) {
-        const checkValues = col.enumValues.map((v) => `'${v.replace(/'/g, "''")}'`).join(", ");
-        def += ` CHECK (${quoteIdentifier(col.name)} IN (${checkValues}))`;
+    if (col.default !== undefined) {
+      if (col.default === "CURRENT_TIMESTAMP") {
+        modifiers.push("defaultNow()");
+      } else {
+        modifiers.push(`default(${getLuaDefault(col.default)})`);
       }
+    }
+
+    if (col.enumValues && col.enumValues.length > 0) {
+      const vals = col.enumValues.map((v) => `"${v.replace(/"/g, '\\"')}"`).join(", ");
+      modifiers.push(`values(${vals})`);
+    }
+
+    if (col.references) {
+      const ref = col.references;
+      modifiers.push(`references("${ref.table}", "${ref.column}")`);
+    }
+
+    if (modifiers.length > 0) {
+      def += ":" + modifiers.join(":");
     }
 
     colDefs.push(def);
   }
 
-  const sql = `CREATE TABLE IF NOT EXISTS ${quoteIdentifier(entity.tableName)} (\n${colDefs.join(",\n")}\n)`;
-  return `    jade.driver():execute([[\n${sql}\n    ]])`;
+  return `    Jade.createTable("${entity.tableName}", {\n${colDefs.join(",\n")}\n    })`;
 }
 
-function getSQLType(col: ColumnDef): string {
+function getColumnType(col: ColumnDef): string {
+  if (col.cuidDefault) return "Jade.CUID()";
+  if (col.nanoidDefault) return "Jade.NanoID()";
+  if (col.enumValues && col.enumValues.length > 0) return "Jade.Enum()";
+
   const typeMap: Record<string, string> = {
-    "VARCHAR": col.length ? `VARCHAR(${col.length})` : "VARCHAR(255)",
-    "TEXT": "TEXT",
-    "INTEGER": "INTEGER",
-    "BIGINT": "BIGINT",
-    "FLOAT": "DOUBLE PRECISION",
-    "DECIMAL": "DECIMAL(10,2)",
-    "BOOLEAN": "BOOLEAN",
-    "TIMESTAMP": "TIMESTAMPTZ",
-    "DATE": "DATE",
-    "UUID": "UUID",
-    "JSON": "JSONB",
+    VARCHAR: col.length ? `Jade.String(${col.length})` : "Jade.String(255)",
+    TEXT: "Jade.Text()",
+    INTEGER: "Jade.Integer()",
+    BIGINT: "Jade.BigInt()",
+    FLOAT: "Jade.Float()",
+    DECIMAL: "Jade.Decimal()",
+    BOOLEAN: "Jade.Boolean()",
+    TIMESTAMP: "Jade.Timestamp()",
+    DATE: "Jade.Date()",
+    UUID: "Jade.UUID()",
+    JSON: "Jade.JSON()",
   };
-  return typeMap[col.type] || "TEXT";
+  return typeMap[col.type] || "Jade.Text()";
 }
 
-function getSQLDefault(col: ColumnDef): string {
-  if (col.default === "true") return "TRUE";
-  if (col.default === "false") return "FALSE";
-  if (col.default === "CURRENT_TIMESTAMP") return "NOW()";
-  if (typeof col.default === "string") return `'${col.default.replace(/'/g, "''")}'`;
-  return String(col.default);
+function getLuaDefault(value: any): string {
+  if (value === "true") return "true";
+  if (value === "false") return "false";
+  if (typeof value === "string") return `"${value.replace(/"/g, '\\"')}"`;
+  return String(value);
+}
+
+/**
+ * Generate raw SQL CREATE TABLE using dialect-aware type mapping.
+ * Used by db-push which executes SQL directly.
+ */
+export function generateCreateTableSQL(entity: EntityDef, dialect: SQLDialect): string {
+  const colDefs: string[] = [];
+
+  for (const col of entity.columns) {
+    let def: string;
+
+    if (col.primaryKey && (col.type === "INTEGER" || col.type === "BIGINT")) {
+      def = `${dialect.quoteIdentifier(col.name)} ${dialect.autoIncrement(col.name)}`;
+    } else if (col.enumValues && col.enumValues.length > 0 && dialect.supportsEnum()) {
+      const typeName = `enum_${entity.tableName}_${col.name}`;
+      def = `${dialect.quoteIdentifier(col.name)} ${dialect.quoteIdentifier(typeName)}`;
+    } else {
+      def = `${dialect.quoteIdentifier(col.name)} ${dialect.mapType(col.type, col.length)}`;
+      if (col.primaryKey) def += " PRIMARY KEY";
+      if (col.notNull && !col.primaryKey) def += " NOT NULL";
+      if (col.unique) def += " UNIQUE";
+      if (col.default !== undefined) {
+        def += ` DEFAULT ${dialect.mapDefault(col.default, col.type)}`;
+      }
+      if (col.enumValues && col.enumValues.length > 0 && !dialect.supportsEnum()) {
+        const checkValues = col.enumValues.map((v) => `'${v.replace(/'/g, "''")}'`).join(", ");
+        def += ` CHECK (${dialect.quoteIdentifier(col.name)} IN (${checkValues}))`;
+      }
+    }
+
+    colDefs.push(`    ${def}`);
+  }
+
+  return `CREATE TABLE IF NOT EXISTS ${dialect.quoteIdentifier(entity.tableName)} (\n${colDefs.join(",\n")}\n)`;
+}
+
+/**
+ * Generate ALTER TABLE ADD CONSTRAINT for foreign keys.
+ */
+export function generateForeignKeySQL(
+  tableName: string,
+  colName: string,
+  refTable: string,
+  refColumn: string,
+  dialect: SQLDialect
+): string {
+  const fkName = `fk_${tableName}_${colName}`;
+  return `ALTER TABLE ${dialect.quoteIdentifier(tableName)} ADD CONSTRAINT ${dialect.quoteIdentifier(fkName)} FOREIGN KEY (${dialect.quoteIdentifier(colName)}) REFERENCES ${dialect.quoteIdentifier(refTable)}(${dialect.quoteIdentifier(refColumn)})`;
 }
