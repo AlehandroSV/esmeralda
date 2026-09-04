@@ -10,6 +10,13 @@ import { ensureDir } from "../core/file-manager.js";
 import { detectDriver, getDialect, type SQLDialect, type DriverKind } from "../core/sql-dialect.js";
 import { LuaBridge } from "../core/lua-bridge.js";
 
+/** Generate a 14-digit timestamp compatible with Jade's os.date("%Y%m%d%H%M%S") */
+function jadeTimestamp(): string {
+  const now = new Date();
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+}
+
 /* ─── DB introspection helpers ──────────────────────────────── */
 
 async function introspectDatabase(projectRoot: string, dialect: SQLDialect, driverKind: DriverKind): Promise<TableDef[]> {
@@ -379,7 +386,7 @@ async function runSync(options: SyncOptions): Promise<void> {
   Logger.info("Generating migration...");
 
   const { upSql, downSql } = generateSyncSQL(diff, dialect);
-  const timestamp = Date.now().toString().slice(0, 14);
+  const timestamp = jadeTimestamp();
 
   // Generate descriptive name from diff
   const parts: string[] = [];
