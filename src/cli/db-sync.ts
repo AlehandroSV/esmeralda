@@ -6,7 +6,7 @@ import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { parseSchemaFile, mapType } from "../core/schema-parser.js";
 import { loadState, saveState } from "../core/schema-state.js";
-import { DiffEngine, type TableDef, type ColumnDef, type DiffResult } from "../core/diff-engine.js";
+import { DiffEngine, type TableDef, type ColumnDef, type DiffResult, type IndexDef } from "../core/diff-engine.js";
 import { ensureDir } from "../core/file-manager.js";
 import { LuaBridge } from "../core/lua-bridge.js";
 import { getConfigPathForEnv, LUA_CONFIG_LOAD } from "../core/config.js";
@@ -59,7 +59,49 @@ print(require("dkjson").encode(cols))
       default: c.column_default,
     }));
 
-    result.push({ name: tname, columns: parsedCols });
+    // Get indexes for this table
+    const idxScript = `
+local jade = require("jade")
+${LUA_CONFIG_LOAD}
+jade.configure(_cfg)
+local rows = jade.driver():execute([[
+  SELECT indexname, indexdef
+  FROM pg_indexes
+  WHERE tablename = ']] .. ARGS.tname:gsub("'", "''") .. [[' AND schemaname = 'public'
+  ORDER BY indexname
+]])
+local result = {}
+for _, r in ipairs(rows) do
+  local unique = r.indexdef:match("UNIQUE") ~= nil
+  local cols_str = r.indexdef:match("%((.+)%)")
+  local cols = {}
+  if cols_str then
+    for col in cols_str:gmatch("[^,]+") do
+      col = col:match("^%s*(.-)%s*$")
+      table.insert(cols, col)
+    end
+  end
+  table.insert(result, { name = r.indexname, columns = cols, unique = unique })
+end
+print(require("dkjson").encode(result))
+    `;
+
+    let indexes: IndexDef[] = [];
+    try {
+      const idxResult: any[] = await bridge.executeSafeJson(idxScript, { configPath, envConfigPath, tname });
+      // Filter out primary key indexes (they're managed by the column definition)
+      indexes = idxResult
+        .filter((idx: any) => !idx.name.endsWith("_pkey"))
+        .map((idx: any) => ({
+          name: idx.name,
+          columns: idx.columns,
+          unique: idx.unique || undefined,
+        }));
+    } catch {
+      // Index introspection might fail on non-PostgreSQL drivers
+    }
+
+    result.push({ name: tname, columns: parsedCols, indexes: indexes.length > 0 ? indexes : undefined });
   }
 
   return result;
@@ -113,7 +155,16 @@ function parseLocalSchema(projectRoot: string): TableDef[] {
           length: c.length || undefined,
           nullable: !c.notNull ? true : undefined,
         }));
-        result.push({ name: ent.name, columns: cols });
+        // Also generate implicit unique indexes from :unique() columns
+        const implicitIndexes: IndexDef[] = ent.columns
+          .filter(c => c.unique)
+          .map(c => ({
+            name: `${ent.tableName}_${c.name}_key`,
+            columns: [c.name],
+            unique: true,
+          }));
+        const allIndexes = [...(ent.indexes || []), ...implicitIndexes];
+        result.push({ name: ent.name, columns: cols, indexes: allIndexes.length > 0 ? allIndexes : undefined });
       }
     } catch {
       Logger.warn(`  Could not parse ${file}, skipping`);
@@ -151,6 +202,14 @@ function formatDiff(diff: DiffResult): string[] {
     lines.push(`  ~ ${mc.table}.${mc.column.name} → ${mc.column.type}${mc.column.length ? `(${mc.column.length})` : ""}${!mc.column.nullable ? " NOT NULL" : ""}`);
   }
 
+  for (const ai of diff.addIndexes) {
+    lines.push(`  + INDEX ${ai.index.name} ON ${ai.table} (${ai.index.columns.join(", ")})${ai.index.unique ? " UNIQUE" : ""}`);
+  }
+
+  for (const di of diff.dropIndexes) {
+    lines.push(`  - INDEX ${di.index} ON ${di.table}`);
+  }
+
   return lines;
 }
 
@@ -186,6 +245,19 @@ function generateSyncSQL(diff: DiffResult): { upSql: string; downSql: string } {
 
   for (const tn of diff.dropTables) {
     upParts.push(`DROP TABLE IF EXISTS ${quote(tn)} CASCADE;`);
+  }
+
+  // Index changes
+  for (const ai of diff.addIndexes) {
+    const unique = ai.index.unique ? "UNIQUE " : "";
+    const cols = ai.index.columns.map(c => quote(c)).join(", ");
+    upParts.push(`CREATE ${unique}INDEX ${quote(ai.index.name)} ON ${quote(ai.table)} (${cols});`);
+    downParts.push(`DROP INDEX IF EXISTS ${quote(ai.index.name)};`);
+  }
+
+  for (const di of diff.dropIndexes) {
+    upParts.push(`DROP INDEX IF EXISTS ${quote(di.index)};`);
+    // Down: would need original index definition — skip for now
   }
 
   return {

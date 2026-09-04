@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { EntityDef } from "./schema-parser.js";
+import type { IndexDef } from "./diff-engine.js";
 
 const STATE_FILE = ".esmeralda-state.json";
 
@@ -8,6 +9,7 @@ export interface SchemaStateEntity {
   name: string;
   tableName: string;
   columns: { name: string; type: string; length?: number }[];
+  indexes?: IndexDef[];
 }
 
 export interface SchemaState {
@@ -47,6 +49,7 @@ export function saveState(projectRoot: string, entities: EntityDef[]): void {
         type: c.type,
         length: c.length,
       })),
+      indexes: e.indexes,
     })),
   };
 

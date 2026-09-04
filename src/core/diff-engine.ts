@@ -1,6 +1,13 @@
+export interface IndexDef {
+  name: string;
+  columns: string[];
+  unique?: boolean;
+}
+
 export interface TableDef {
   name: string;
   columns: ColumnDef[];
+  indexes?: IndexDef[];
 }
 
 export interface ColumnDef {
@@ -17,6 +24,8 @@ export interface DiffResult {
   addColumns: { table: string; column: ColumnDef }[];
   dropColumns: { table: string; column: string }[];
   modifyColumns: { table: string; column: ColumnDef }[];
+  addIndexes: { table: string; index: IndexDef }[];
+  dropIndexes: { table: string; index: string }[];
 }
 
 export class DiffEngine {
@@ -27,6 +36,8 @@ export class DiffEngine {
       addColumns: [],
       dropColumns: [],
       modifyColumns: [],
+      addIndexes: [],
+      dropIndexes: [],
     };
 
     const currentMap = new Map(current.map(t => [t.name, t]));
@@ -46,7 +57,7 @@ export class DiffEngine {
       }
     }
 
-    // Compare columns in existing tables
+    // Compare columns and indexes in existing tables
     for (const [name, desiredTable] of desiredMap) {
       const currentTable = currentMap.get(name);
       if (!currentTable) continue;
@@ -75,6 +86,28 @@ export class DiffEngine {
           result.modifyColumns.push({ table: name, column: desiredCol });
         }
       }
+
+      // Compare indexes
+      const currentIndexMap = new Map((currentTable.indexes || []).map(i => [i.name, i]));
+      const desiredIndexMap = new Map((desiredTable.indexes || []).map(i => [i.name, i]));
+
+      // Find indexes to add
+      for (const [idxName, idx] of desiredIndexMap) {
+        if (!currentIndexMap.has(idxName)) {
+          result.addIndexes.push({ table: name, index: idx });
+        } else if (this.indexChanged(currentIndexMap.get(idxName)!, idx)) {
+          // Index exists but changed — drop old + add new
+          result.dropIndexes.push({ table: name, index: idxName });
+          result.addIndexes.push({ table: name, index: idx });
+        }
+      }
+
+      // Find indexes to drop
+      for (const [idxName] of currentIndexMap) {
+        if (!desiredIndexMap.has(idxName)) {
+          result.dropIndexes.push({ table: name, index: idxName });
+        }
+      }
     }
 
     return result;
@@ -86,11 +119,22 @@ export class DiffEngine {
            current.nullable !== desired.nullable;
   }
 
+  private indexChanged(current: IndexDef, desired: IndexDef): boolean {
+    if (current.unique !== desired.unique) return true;
+    if (current.columns.length !== desired.columns.length) return true;
+    for (let i = 0; i < current.columns.length; i++) {
+      if (current.columns[i] !== desired.columns[i]) return true;
+    }
+    return false;
+  }
+
   isEmpty(diff: DiffResult): boolean {
     return diff.createTables.length === 0 &&
            diff.dropTables.length === 0 &&
            diff.addColumns.length === 0 &&
            diff.dropColumns.length === 0 &&
-           diff.modifyColumns.length === 0;
+           diff.modifyColumns.length === 0 &&
+           diff.addIndexes.length === 0 &&
+           diff.dropIndexes.length === 0;
   }
 }
