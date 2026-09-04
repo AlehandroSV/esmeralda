@@ -54,7 +54,9 @@ function generateCreateTable(entity: EntityDef): string {
     let def: string;
 
     // Integer primary keys become SERIAL (auto-increment)
-    if (col.primaryKey && (col.type === "INTEGER" || col.type === "BIGINT")) {
+    if (col.primaryKey && col.type === "BIGINT") {
+      def = `        ${quoteIdentifier(col.name)} BIGSERIAL PRIMARY KEY`;
+    } else if (col.primaryKey && col.type === "INTEGER") {
       def = `        ${quoteIdentifier(col.name)} SERIAL PRIMARY KEY`;
     } else {
       def = `        ${quoteIdentifier(col.name)} ${getSQLType(col)}`;
@@ -91,7 +93,7 @@ function getSQLType(col: ColumnDef): string {
     "VARCHAR": col.length ? `VARCHAR(${col.length})` : "VARCHAR(255)",
     "TEXT": "TEXT",
     "INTEGER": "INTEGER",
-    "BIGINT": "BIGSERIAL",
+    "BIGINT": "BIGINT",
     "FLOAT": "DOUBLE PRECISION",
     "DECIMAL": "DECIMAL(10,2)",
     "BOOLEAN": "BOOLEAN",

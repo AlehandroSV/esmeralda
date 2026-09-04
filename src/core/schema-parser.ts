@@ -19,11 +19,19 @@ export interface ColumnDef {
 
 export { IndexDef } from "./diff-engine.js";
 
+export interface RelationDef {
+  type: "belongsTo" | "hasMany" | "hasOne" | "hasAndBelongsToMany" | "hasManyThrough";
+  model: string;
+  foreignKey?: string;
+  through?: string;
+}
+
 export interface EntityDef {
   name: string;
   tableName: string;
   columns: ColumnDef[];
   indexes?: IndexDef[];
+  relations?: RelationDef[];
 }
 
 export interface ValidationError {
@@ -55,6 +63,7 @@ export function parseSchemaFile(content: string): EntityDef[] {
     const columnsBlock = content.substring(blockStart, blockEnd - 1);
     const columns = parseColumns(columnsBlock);
     const indexes = parseIndexes(columnsBlock);
+    const relations = parseRelations(columnsBlock);
 
     // Infer entity name from table name
     const name = tableName.charAt(0).toUpperCase() + tableName.slice(1);
@@ -64,6 +73,7 @@ export function parseSchemaFile(content: string): EntityDef[] {
       tableName,
       columns,
       indexes: indexes.length > 0 ? indexes : undefined,
+      relations: relations.length > 0 ? relations : undefined,
     });
   }
 
@@ -122,6 +132,9 @@ function parseColumns(block: string): ColumnDef[] {
       if (defaultMatch) {
         column.default = defaultMatch[1];
       }
+      if (modifiers.includes("defaultNow")) {
+        column.default = "CURRENT_TIMESTAMP";
+      }
 
       // Parse references
       const refsMatch = modifiers.match(/references\s*\(\s*["']?(\w+)["']?\s*(?:,\s*["']?(\w+)["']?)?\s*\)/);
@@ -162,6 +175,28 @@ function parseIndexes(block: string): IndexDef[] {
   }
 
   return indexes;
+}
+
+function parseRelations(block: string): RelationDef[] {
+  const relations: RelationDef[] = [];
+  const relationTypes = ["belongsTo", "hasMany", "hasOne", "hasAndBelongsToMany", "hasManyThrough"] as const;
+
+  for (const relType of relationTypes) {
+    const relRegex = new RegExp(relType + `\\s*\\(\\s*["'](\\w+)["']\\s*(?:,\\s*\\{([^}]*)\\})?\\s*\\)`, "g");
+    let match;
+    while ((match = relRegex.exec(block)) !== null) {
+      const relation: RelationDef = { type: relType, model: match[1] };
+      if (match[2]) {
+        const fkMatch = match[2].match(/foreign_key\s*=\s*["'](\w+)["']/);
+        if (fkMatch) relation.foreignKey = fkMatch[1];
+        const throughMatch = match[2].match(/through\s*=\s*["'](\w+)["']/);
+        if (throughMatch) relation.through = throughMatch[1];
+      }
+      relations.push(relation);
+    }
+  }
+
+  return relations;
 }
 
 export function mapType(typeName: string): string {

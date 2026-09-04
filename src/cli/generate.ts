@@ -8,6 +8,13 @@ import { generateMigration } from "../core/migration-generator.js";
 import { writeFile, ensureDir } from "../core/file-manager.js";
 import { loadState, saveState, inferMigrationName } from "../core/schema-state.js";
 
+/** Generate a 14-digit timestamp compatible with Jade's os.date("%Y%m%d%H%M%S") */
+function jadeTimestamp(): string {
+  const now = new Date();
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+}
+
 interface GenerateOptions {
   name?: string;
   preview?: boolean;
@@ -66,7 +73,7 @@ export function registerGenerate(program: Command): void {
       }
 
       // Generate migration
-      const timestamp = Date.now();
+      const timestamp = jadeTimestamp();
       const migrationDir = path.join(projectRoot, "migrations");
       const filename = `${timestamp}_${name}.lua`;
 

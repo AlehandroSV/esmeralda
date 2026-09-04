@@ -65,7 +65,7 @@ export function registerSeed(db: Command): void {
 local jade = require("jade")
 ${LUA_CONFIG_LOAD}
 jade.configure(_cfg)
-dofile(ARGS.seedPath)
+jade.Seed.execute(jade.driver(), ARGS.seedPath)
         `;
 
         for (const file of files) {
