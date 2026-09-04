@@ -1,11 +1,6 @@
 import { Command } from "commander";
 import * as fs from "fs";
 import * as path from "path";
-import { promisify } from "util";
-import { execFile } from "child_process";
-
-const exec = promisify(execFile);
-
 import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { parseSchemaFile, mapType } from "../core/schema-parser.js";
@@ -13,18 +8,20 @@ import { loadState, saveState } from "../core/schema-state.js";
 import { DiffEngine, type TableDef, type ColumnDef, type DiffResult } from "../core/diff-engine.js";
 import { ensureDir } from "../core/file-manager.js";
 import { detectDriver, getDialect, type SQLDialect, type DriverKind } from "../core/sql-dialect.js";
+import { LuaBridge } from "../core/lua-bridge.js";
 
 /* ─── DB introspection helpers ──────────────────────────────── */
 
 async function introspectDatabase(projectRoot: string, dialect: SQLDialect, driverKind: DriverKind): Promise<TableDef[]> {
-  const configPath = path.join(projectRoot, "jade.config.lua").replace(/\\/g, "\\\\");
+  const configPath = path.join(projectRoot, "jade.config.lua");
+  const bridge = new LuaBridge();
 
   // Get table list
   const listScript = `
     local jade = require("jade")
-    local cfg = dofile("${configPath}")
+    local cfg = dofile(ARGS.configPath)
     jade.configure(cfg)
-    local rows = jade.driver():execute([[${dialect.tableListQuery()}]])
+    local rows = jade.driver():execute(ARGS.query)
     local names = {}
     for _, r in ipairs(rows) do
       ${tableListExtractor(driverKind)}
@@ -32,22 +29,25 @@ async function introspectDatabase(projectRoot: string, dialect: SQLDialect, driv
     print(require("dkjson").encode(names))
   `;
 
-  const { stdout: tblOut } = await exec("lua", ["-e", listScript]);
-  const tableNames = JSON.parse(tblOut.trim()) as string[];
+  const tableNames = await bridge.executeSafeJson<string[]>(listScript, {
+    configPath,
+    query: dialect.tableListQuery(),
+  });
   const result: TableDef[] = [];
 
   for (const tname of tableNames) {
-    const colQuery = dialect.columnListQuery(tname);
     const colScript = `
       local jade = require("jade")
-      local cfg = dofile("${configPath}")
+      local cfg = dofile(ARGS.configPath)
       jade.configure(cfg)
-      local cols = jade.driver():execute([[${colQuery}]])
+      local cols = jade.driver():execute(ARGS.query)
       print(require("dkjson").encode(cols))
     `;
 
-    const { stdout: colOut } = await exec("lua", ["-e", colScript]);
-    const rawCols = JSON.parse(colOut.trim()) as any[];
+    const rawCols = await bridge.executeSafeJson<any[]>(colScript, {
+      configPath,
+      query: dialect.columnListQuery(tname),
+    });
 
     if (rawCols.length === 0) continue;
 
@@ -281,13 +281,13 @@ async function runMigrateScript(projectRoot: string, fileName: string): Promise<
   const configPath = path.join(projectRoot, "jade.config.lua");
   const migPath = path.join(migrationsDir, fileName);
 
-  const singleLineScript = `
+  const script = `
 local jade = require("jade")
-local cfg = dofile("${configPath.replace(/\\/g, "\\\\")}")
+local cfg = dofile(ARGS.configPath)
 jade.configure(cfg)
 local driver = jade.driver()
 
-local f = io.open("${migPath.replace(/\\/g, "\\\\")}", "r")
+local f = io.open(ARGS.migPath, "r")
 if not f then
   print("ERROR: Cannot read migration file")
   os.exit(1)
@@ -309,8 +309,9 @@ end
 print("OK")
 `;
 
+  const bridge = new LuaBridge();
   try {
-    await exec("lua", ["-e", singleLineScript]);
+    await bridge.executeSafe(script, { configPath, migPath });
     return true;
   } catch {
     return false;

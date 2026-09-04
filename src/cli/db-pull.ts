@@ -6,10 +6,7 @@ import { findProjectRoot } from "../core/project.js";
 import { parseSchemaFile } from "../core/schema-parser.js";
 import { saveState } from "../core/schema-state.js";
 import { detectDriver, getDialect, type SQLDialect, type DriverKind } from "../core/sql-dialect.js";
-import { execFile } from "child_process";
-import { promisify } from "util";
-
-const exec = promisify(execFile);
+import { LuaBridge } from "../core/lua-bridge.js";
 
 export function registerDbPull(db: Command): void {
   db
@@ -43,8 +40,8 @@ export function registerDbPull(db: Command): void {
           print(require("dkjson").encode(result))
         `;
 
-        const { stdout } = await exec("lua", ["-e", listScript]);
-        const tables = JSON.parse(stdout.trim());
+        const bridge = new LuaBridge();
+        const tables = await bridge.executeSafeJson(listScript);
 
         Logger.info(`Found ${tables.length} tables`);
 
@@ -67,8 +64,7 @@ export function registerDbPull(db: Command): void {
             print(require("dkjson").encode(cols))
           `;
 
-          const { stdout: colOutput } = await exec("lua", ["-e", columnScript]);
-          const rawColumns = JSON.parse(colOutput.trim());
+          const rawColumns = await bridge.executeSafeJson(columnScript);
           const columns = normalizeColumns(rawColumns, driverKind);
 
           // Get foreign keys using dialect-specific query
@@ -82,8 +78,7 @@ export function registerDbPull(db: Command): void {
               local fks = jade.driver():execute([[${fkQuery}]])
               print(require("dkjson").encode(fks))
             `;
-            const { stdout: fkOutput } = await exec("lua", ["-e", fkScript]);
-            foreignKeys = normalizeForeignKeys(JSON.parse(fkOutput.trim()), driverKind);
+            foreignKeys = normalizeForeignKeys(await bridge.executeSafeJson(fkScript), driverKind);
           } catch {
             // Foreign keys query might fail, continue without them
           }

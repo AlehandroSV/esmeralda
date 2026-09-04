@@ -6,10 +6,7 @@ import { findProjectRoot } from "../core/project.js";
 import { parseSchemaFile } from "../core/schema-parser.js";
 import { generateCreateTableSQL, generateForeignKeySQL } from "../core/migration-generator.js";
 import { detectDriver, getDialect, SQLDialect } from "../core/sql-dialect.js";
-import { execFile } from "child_process";
-import { promisify } from "util";
-
-const exec = promisify(execFile);
+import { LuaBridge } from "../core/lua-bridge.js";
 
 interface DbPushOptions {
   force?: boolean;
@@ -65,17 +62,21 @@ export function registerDbPush(db: Command): void {
         // Generate dialect-aware SQL
         const sqlStatements = generateSchemaSQL(entities, dialect);
 
+        const bridge = new LuaBridge();
         for (const sql of sqlStatements) {
           Logger.info(`  Executing: ${sql.substring(0, 80)}...`);
 
           const script = `
             local jade = require("jade")
-            local config = dofile("${path.join(projectRoot, "jade.config.lua").replace(/\\/g, "\\\\")}")
+            local config = dofile(ARGS.configPath)
             jade.configure(config)
-            jade.driver():execute([[${sql}]])
+            jade.driver():execute(ARGS.sql)
           `;
 
-          await exec("lua", ["-e", script]);
+          await bridge.executeSafe(script, {
+            configPath: path.join(projectRoot, "jade.config.lua"),
+            sql,
+          });
         }
 
         Logger.success("Schema pushed to database!");
