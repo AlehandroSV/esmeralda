@@ -4,6 +4,7 @@ import * as path from "path";
 import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { LuaBridge } from "../core/lua-bridge.js";
+import { getConfigPathForEnv, LUA_CONFIG_LOAD } from "../core/config.js";
 
 function hasDockerCompose(projectRoot: string): boolean {
   return fs.existsSync(path.join(projectRoot, "docker-compose.yml")) ||
@@ -58,12 +59,12 @@ export function registerSeed(db: Command): void {
         Logger.info(`Running ${files.length} seed file(s)...`);
 
         const bridge = new LuaBridge();
-        const configPath = path.join(projectRoot, "jade.config.lua");
+        const { configPath, envConfigPath } = getConfigPathForEnv(projectRoot);
 
         const script = `
 local jade = require("jade")
-local config = dofile(ARGS.configPath)
-jade.configure(config)
+${LUA_CONFIG_LOAD}
+jade.configure(_cfg)
 dofile(ARGS.seedPath)
         `;
 
@@ -74,9 +75,9 @@ dofile(ARGS.seedPath)
             const seedPath = path.join(seedsDir, file);
 
             if (useDocker) {
-              await bridge.executeSafeDocker(script, { configPath, seedPath }, projectRoot);
+              await bridge.executeSafeDocker(script, { configPath, envConfigPath, seedPath }, projectRoot);
             } else {
-              await bridge.executeSafe(script, { configPath, seedPath });
+              await bridge.executeSafe(script, { configPath, envConfigPath, seedPath });
             }
 
             Logger.success(`  Seeded: ${file}`);

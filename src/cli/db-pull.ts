@@ -5,7 +5,8 @@ import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { parseSchemaFile } from "../core/schema-parser.js";
 import { saveState } from "../core/schema-state.js";
-import { LuaBridge, validateLuaIdentifier } from "../core/lua-bridge.js";
+import { LuaBridge } from "../core/lua-bridge.js";
+import { getConfigPathForEnv, LUA_CONFIG_LOAD } from "../core/config.js";
 
 export function registerDbPull(db: Command): void {
   db
@@ -23,13 +24,13 @@ export function registerDbPull(db: Command): void {
         Logger.info("Introspecting database...");
 
         const bridge = new LuaBridge();
-        const configPath = path.join(projectRoot, "jade.config.lua");
+        const { configPath, envConfigPath } = getConfigPathForEnv(projectRoot);
 
         // Get table list
         const listScript = `
 local jade = require("jade")
-local config = dofile(ARGS.configPath)
-jade.configure(config)
+${LUA_CONFIG_LOAD}
+jade.configure(_cfg)
 local tables = jade.driver():execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name")
 local result = {}
 for _, row in ipairs(tables) do
@@ -38,7 +39,7 @@ end
 print(require("dkjson").encode(result))
         `;
 
-        const tables: string[] = await bridge.executeSafeJson(listScript, { configPath });
+        const tables: string[] = await bridge.executeSafeJson(listScript, { configPath, envConfigPath });
 
         Logger.info(`Found ${tables.length} tables`);
 
@@ -53,14 +54,15 @@ print(require("dkjson").encode(result))
           // Get columns for this table — pass tableName via ARGS to avoid injection
           const columnScript = `
 local jade = require("jade")
-local config = dofile(ARGS.configPath)
-jade.configure(config)
+${LUA_CONFIG_LOAD}
+jade.configure(_cfg)
 local cols = jade.driver():execute("SELECT column_name, data_type, character_maximum_length, is_nullable, column_default FROM information_schema.columns WHERE table_name = '" .. ARGS.tableName:gsub("'", "''") .. "' ORDER BY ordinal_position")
 print(require("dkjson").encode(cols))
           `;
 
           const columns: any[] = await bridge.executeSafeJson(columnScript, {
             configPath,
+            envConfigPath,
             tableName,
           });
 
@@ -69,8 +71,8 @@ print(require("dkjson").encode(cols))
           try {
             const fkScript = `
 local jade = require("jade")
-local config = dofile(ARGS.configPath)
-jade.configure(config)
+${LUA_CONFIG_LOAD}
+jade.configure(_cfg)
 local fks = jade.driver():execute([[
   SELECT
     tc.constraint_name,
@@ -91,6 +93,7 @@ print(require("dkjson").encode(fks))
 
             foreignKeys = await bridge.executeSafeJson(fkScript, {
               configPath,
+              envConfigPath,
               tableName,
             });
           } catch {

@@ -9,17 +9,18 @@ import { loadState, saveState } from "../core/schema-state.js";
 import { DiffEngine, type TableDef, type ColumnDef, type DiffResult } from "../core/diff-engine.js";
 import { ensureDir } from "../core/file-manager.js";
 import { LuaBridge } from "../core/lua-bridge.js";
+import { getConfigPathForEnv, LUA_CONFIG_LOAD } from "../core/config.js";
 
 /* ─── DB introspection helpers ──────────────────────────────── */
 
 async function introspectDatabase(projectRoot: string): Promise<TableDef[]> {
   const bridge = new LuaBridge();
-  const configPath = path.join(projectRoot, "jade.config.lua");
+  const { configPath, envConfigPath } = getConfigPathForEnv(projectRoot);
 
   const listScript = `
 local jade = require("jade")
-local cfg = dofile(ARGS.configPath)
-jade.configure(cfg)
+${LUA_CONFIG_LOAD}
+jade.configure(_cfg)
 local rows = jade.driver():execute([[
   SELECT table_name FROM information_schema.tables
   WHERE table_schema = 'public' ORDER BY table_name
@@ -29,14 +30,14 @@ for _, r in ipairs(rows) do table.insert(names, r.table_name) end
 print(require("dkjson").encode(names))
   `;
 
-  const tableNames: string[] = await bridge.executeSafeJson(listScript, { configPath });
+  const tableNames: string[] = await bridge.executeSafeJson(listScript, { configPath, envConfigPath });
   const result: TableDef[] = [];
 
   for (const tname of tableNames) {
     const colScript = `
 local jade = require("jade")
-local cfg = dofile(ARGS.configPath)
-jade.configure(cfg)
+${LUA_CONFIG_LOAD}
+jade.configure(_cfg)
 local cols = jade.driver():execute([[
   SELECT column_name, data_type, character_maximum_length, is_nullable, column_default
   FROM information_schema.columns
@@ -46,7 +47,7 @@ local cols = jade.driver():execute([[
 print(require("dkjson").encode(cols))
     `;
 
-    const cols: any[] = await bridge.executeSafeJson(colScript, { configPath, tname });
+    const cols: any[] = await bridge.executeSafeJson(colScript, { configPath, envConfigPath, tname });
 
     if (cols.length === 0) continue;
 
@@ -275,13 +276,13 @@ function joinStatements(parts: string[]): string {
 async function runMigrateScript(projectRoot: string, fileName: string): Promise<boolean> {
   const bridge = new LuaBridge();
   const migrationsDir = path.join(projectRoot, "migrations");
-  const configPath = path.join(projectRoot, "jade.config.lua");
+  const { configPath, envConfigPath } = getConfigPathForEnv(projectRoot);
   const migPath = path.join(migrationsDir, fileName);
 
   const script = `
 local jade = require("jade")
-local cfg = dofile(ARGS.configPath)
-jade.configure(cfg)
+${LUA_CONFIG_LOAD}
+jade.configure(_cfg)
 local driver = jade.driver()
 
 local f = io.open(ARGS.migPath, "r")
@@ -307,7 +308,7 @@ print("OK")
   `;
 
   try {
-    await bridge.executeSafe(script, { configPath, migPath });
+    await bridge.executeSafe(script, { configPath, envConfigPath, migPath });
     return true;
   } catch {
     return false;

@@ -4,6 +4,7 @@ import * as path from "path";
 import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { LuaBridge } from "../core/lua-bridge.js";
+import { getConfigPathForEnv, LUA_CONFIG_LOAD } from "../core/config.js";
 
 interface RollbackOptions {
   steps?: string;
@@ -44,18 +45,19 @@ export function registerMigrateRollback(migrate: Command): void {
         Logger.info(`Rolling back ${steps} migration(s)...`);
 
         const bridge = new LuaBridge();
-        const configPath = path.join(projectRoot, "jade.config.lua");
+        const { configPath, envConfigPath } = getConfigPathForEnv(projectRoot);
 
         const script = `
 local jade = require("jade")
-local config = dofile(ARGS.configPath)
-jade.configure(config)
+${LUA_CONFIG_LOAD}
+jade.configure(_cfg)
 jade.migration.init(jade.driver())
 jade.migration.rollback(jade.driver(), ARGS.steps)
         `;
 
         await bridge.executeSafe(script, {
           configPath,
+          envConfigPath,
           steps,
         });
 

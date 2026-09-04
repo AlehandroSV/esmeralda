@@ -4,6 +4,7 @@ import * as path from "path";
 import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { LuaBridge } from "../core/lua-bridge.js";
+import { getConfigPathForEnv, LUA_CONFIG_LOAD } from "../core/config.js";
 
 interface MigrateOptions {
   preview?: boolean;
@@ -62,12 +63,12 @@ export function registerMigrate(program: Command): Command {
         Logger.info("Running migrations...");
 
         const bridge = new LuaBridge();
-        const configPath = path.join(projectRoot, "jade.config.lua");
+        const { configPath, envConfigPath } = getConfigPathForEnv(projectRoot);
 
         const script = `
 local jade = require("jade")
-local config = dofile(ARGS.configPath)
-jade.configure(config)
+${LUA_CONFIG_LOAD}
+jade.configure(_cfg)
 jade.migration.init(jade.driver())
 local migration = dofile(ARGS.migrationPath)
 migration.up()
@@ -90,12 +91,14 @@ print("  OK: " .. ARGS.fileName)
             if (useDocker) {
               await bridge.executeSafeDocker(script, {
                 configPath,
+                envConfigPath,
                 migrationPath,
                 fileName: file,
               }, projectRoot);
             } else {
               await bridge.executeSafe(script, {
                 configPath,
+                envConfigPath,
                 migrationPath,
                 fileName: file,
               });
@@ -147,12 +150,12 @@ print("  OK: " .. ARGS.fileName)
 
         const useDocker = hasDockerCompose(projectRoot);
         const bridge = new LuaBridge();
-        const configPath = path.join(projectRoot, "jade.config.lua");
+        const { configPath, envConfigPath } = getConfigPathForEnv(projectRoot);
 
         const script = `
 local jade = require("jade")
-local config = dofile(ARGS.configPath)
-jade.configure(config)
+${LUA_CONFIG_LOAD}
+jade.configure(_cfg)
 jade.migration.init(jade.driver())
 local tracker = require("jade.migration.tracker")
 local applied = tracker.getAppliedMigrations(jade.driver())
@@ -166,9 +169,9 @@ print(require("dkjson").encode(result))
 
         let applied: string[];
         if (useDocker) {
-          applied = await bridge.executeSafeDockerJson(script, { configPath }, projectRoot);
+          applied = await bridge.executeSafeDockerJson(script, { configPath, envConfigPath }, projectRoot);
         } else {
-          applied = await bridge.executeSafeJson(script, { configPath });
+          applied = await bridge.executeSafeJson(script, { configPath, envConfigPath });
         }
 
         Logger.info("Migration Status:");
