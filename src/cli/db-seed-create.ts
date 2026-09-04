@@ -1,5 +1,4 @@
 import { Command } from "commander";
-import * as fs from "fs";
 import * as path from "path";
 import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";

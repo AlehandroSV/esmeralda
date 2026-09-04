@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { execSync } from "child_process";
 
 export interface DatabaseConfig {
   name: string;
@@ -42,7 +43,6 @@ export function parseMultiDbConfig(projectRoot: string): MultiDbConfig | null {
 
   // Use Lua to parse the config
   try {
-    const { execSync } = require("child_process");
     const script = `
       local config = dofile("${configPath.replace(/\\/g, "\\\\")}")
       local result = {}

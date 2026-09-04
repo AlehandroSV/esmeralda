@@ -1,11 +1,11 @@
 import { Command } from "commander";
 import * as fs from "fs";
 import * as path from "path";
+import * as readline from "readline";
 
 import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { parseSchemaFile, mapType } from "../core/schema-parser.js";
-import { loadState, saveState } from "../core/schema-state.js";
 import { DiffEngine, type TableDef, type ColumnDef, type DiffResult, type IndexDef } from "../core/diff-engine.js";
 import { ensureDir } from "../core/file-manager.js";
 import { LuaBridge } from "../core/lua-bridge.js";
@@ -494,7 +494,6 @@ function indent(text: string, prefix: string): string {
 
 function promptYesNo(question: string): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
-    const readline = require("readline");
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     rl.question(`${question} [y/N]: `, (answer: string) => {
       const yes = answer.trim().toLowerCase() === "y";

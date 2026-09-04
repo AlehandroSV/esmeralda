@@ -21,6 +21,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -50,17 +51,23 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@yao-pkg/pkg": "^6.21.0",
+    "eslint": "^10.9.1",
     "tsx": "^4.0.0",
     "typescript": "^5.4.0",
+    "typescript-eslint": "^8.69.0",
     "vitest": "^4.1.10"
   },
   "engines": {
     "node": ">=18"
   },
   "pkg": {
-    "scripts": ["dist/**/*.js"],
+    "scripts": [
+      "dist/**/*.js"
+    ],
     "assets": [],
-    "targets": ["node18"],
+    "targets": [
+      "node18"
+    ],
     "outputPath": "dist"
   }
 }

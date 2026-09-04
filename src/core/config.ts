@@ -43,17 +43,6 @@ local _eok, _ecfg = pcall(dofile, ARGS.envConfigPath)
 if _eok and type(_ecfg) == "table" then for _k, _v in pairs(_ecfg) do _cfg[_k] = _v end end
 `;
 
-const DEFAULT_CONFIG: JadeConfig = {
-  database: {
-    driver: "postgresql",
-    host: "localhost",
-    port: 5432,
-    database: "",
-    user: "postgres",
-    password: "",
-  },
-};
-
 /**
  * Parse jade.config.lua by executing it via Lua and returning the result as JSON.
  * Supports both single-database and multi-database config formats.
