@@ -1,11 +1,12 @@
 import { Command } from "commander";
 import * as fs from "fs";
 import * as path from "path";
-import { Logger, AppError, handleError } from "../utils/logger.js";
+import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { parseSchemaFile } from "../core/schema-parser.js";
+import { generateCreateTableSQL, generateForeignKeySQL } from "../core/migration-generator.js";
+import { detectDriver, getDialect, SQLDialect } from "../core/sql-dialect.js";
 import { LuaBridge } from "../core/lua-bridge.js";
-import { getConfigPathForEnv, LUA_CONFIG_LOAD } from "../core/config.js";
 
 interface DbPushOptions {
   force?: boolean;
@@ -30,6 +31,11 @@ export function registerDbPush(db: Command): void {
           throw AppError.schemaDirNotFound();
         }
 
+        const driverKind = detectDriver(projectRoot);
+        const dialect = getDialect(driverKind);
+        Logger.info(`Detected driver: ${driverKind}`);
+
+        // Parse schema files
         const files = fs.readdirSync(schemaDir).filter(f => f.endsWith(".lua") && f !== "init.lua");
         const entities = [];
 
@@ -53,73 +59,73 @@ export function registerDbPush(db: Command): void {
           return;
         }
 
-        const sqlStatements = generateSchemaSQL(entities);
+        // Generate dialect-aware SQL
+        const sqlStatements = generateSchemaSQL(entities, dialect);
+
         const bridge = new LuaBridge();
-        const { configPath, envConfigPath } = getConfigPathForEnv(projectRoot);
-
-        const script = `
-local jade = require("jade")
-${LUA_CONFIG_LOAD}
-jade.configure(_cfg)
-jade.driver():execute(ARGS.sql)
-        `;
-
         for (const sql of sqlStatements) {
           Logger.info(`  Executing: ${sql.substring(0, 80)}...`);
+
+          const script = `
+            local jade = require("jade")
+            local config = dofile(ARGS.configPath)
+            jade.configure(config)
+            jade.driver():execute(ARGS.sql)
+          `;
+
           await bridge.executeSafe(script, {
-            configPath,
-            envConfigPath,
+            configPath: path.join(projectRoot, "jade.config.lua"),
             sql,
           });
         }
 
         Logger.success("Schema pushed to database!");
-      } catch (error: unknown) {
-        handleError(error);
+      } catch (error: any) {
+        if (error instanceof AppError) {
+          Logger.error(error.message);
+          if (error.suggestion) {
+            Logger.info(`Suggestion: ${error.suggestion}`);
+          }
+        } else {
+          Logger.error("Failed to push schema:");
+          Logger.error(error.message);
+        }
+        if (process.env.DEBUG) {
+          console.error(error.stack);
+        }
+        process.exit(1);
       }
     });
 }
 
-function generateSchemaSQL(entities: any[]): string[] {
+function generateSchemaSQL(entities: any[], dialect: SQLDialect): string[] {
   const statements: string[] = [];
 
-  for (const entity of entities) {
-    const columns = entity.columns || [];
-    const colDefs: string[] = [];
-
-    for (const col of columns) {
-      let def = `"${col.name}" ${col.type || "TEXT"}`;
-
-      if (col.length && col.type === "string") {
-        def = `"${col.name}" VARCHAR(${col.length})`;
-      }
-
-      if (col.primaryKey) def += " PRIMARY KEY";
-      if (col.notNull) def += " NOT NULL";
-      if (col.unique) def += " UNIQUE";
-      if (col.default !== undefined) {
-        if (typeof col.default === "string") {
-          def += ` DEFAULT '${col.default}'`;
-        } else {
-          def += ` DEFAULT ${col.default}`;
+  // Create enum types if supported
+  if (dialect.supportsEnum()) {
+    for (const entity of entities) {
+      for (const col of (entity.columns || [])) {
+        if (col.enumValues && col.enumValues.length > 0) {
+          const typeName = `enum_${entity.tableName}_${col.name}`;
+          const stmt = dialect.createEnumType(typeName, col.enumValues);
+          if (stmt) statements.push(stmt);
         }
       }
-
-      colDefs.push(def);
     }
-
-    const sql = `CREATE TABLE IF NOT EXISTS "${entity.tableName}" (\n  ${colDefs.join(",\n  ")}\n)`;
-    statements.push(sql);
   }
 
+  // Create tables
   for (const entity of entities) {
-    const columns = entity.columns || [];
+    statements.push(generateCreateTableSQL(entity, dialect));
+  }
 
-    for (const col of columns) {
+  // Add foreign keys
+  for (const entity of entities) {
+    for (const col of (entity.columns || [])) {
       if (col.references) {
-        const fkName = `fk_${entity.tableName}_${col.name}`;
-        const sql = `ALTER TABLE "${entity.tableName}" ADD CONSTRAINT "${fkName}" FOREIGN KEY ("${col.name}") REFERENCES "${col.references.table}"("${col.references.column}")`;
-        statements.push(sql);
+        statements.push(
+          generateForeignKeySQL(entity.tableName, col.name, col.references.table, col.references.column, dialect)
+        );
       }
     }
   }
