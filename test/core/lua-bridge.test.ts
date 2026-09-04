@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { escapeLuaString, validateLuaIdentifier } from "../../src/core/lua-bridge.js";
+import { escapeLuaString, validateLuaIdentifier, LuaBridge } from "../../src/core/lua-bridge.js";
 
 describe("escapeLuaString", () => {
   it("escapes backslashes", () => {
@@ -109,5 +109,70 @@ describe("validateLuaIdentifier", () => {
 
   it("rejects unicode special characters", () => {
     expect(() => validateLuaIdentifier("täble")).toThrow("Invalid identifier");
+  });
+});
+
+describe("LuaBridge.parseJson error handling", () => {
+  const bridge = new LuaBridge();
+
+  // Access private parseJson via bracket notation for testing
+  const parseJson = (bridge as any).parseJson.bind(bridge);
+
+  it("parses valid JSON object", () => {
+    expect(parseJson('{"key": "value"}', "")).toEqual({ key: "value" });
+  });
+
+  it("parses valid JSON array", () => {
+    expect(parseJson('[1, 2, 3]', "")).toEqual([1, 2, 3]);
+  });
+
+  it("extracts JSON object from output with preceding warnings", () => {
+    const output = 'WARNING: deprecated function\n{"result": true}';
+    expect(parseJson(output, "")).toEqual({ result: true });
+  });
+
+  it("extracts JSON array from output with preceding logs", () => {
+    const output = 'Loading module...\n[{"name": "users"}]';
+    expect(parseJson(output, "")).toEqual([{ name: "users" }]);
+  });
+
+  it("throws informative error for non-JSON output", () => {
+    expect(() => parseJson("lua: script.lua:5: attempt to index nil", "stack traceback"))
+      .toThrow("Failed to parse Lua output as JSON");
+  });
+
+  it("error message includes stdout", () => {
+    try {
+      parseJson("not json", "");
+      expect.fail("should have thrown");
+    } catch (e: any) {
+      expect(e.message).toContain("stdout: not json");
+    }
+  });
+
+  it("error message includes stderr when present", () => {
+    try {
+      parseJson("not json", "some error");
+      expect.fail("should have thrown");
+    } catch (e: any) {
+      expect(e.message).toContain("stderr: some error");
+    }
+  });
+
+  it("error message omits stderr when empty", () => {
+    try {
+      parseJson("not json", "");
+      expect.fail("should have thrown");
+    } catch (e: any) {
+      expect(e.message).not.toContain("stderr:");
+    }
+  });
+
+  it("throws for empty output", () => {
+    expect(() => parseJson("", "")).toThrow("Failed to parse Lua output as JSON");
+  });
+
+  it("throws for partial/malformed JSON", () => {
+    expect(() => parseJson('{"key":', "")).toThrow("Failed to parse Lua output as JSON");
   });
 });
