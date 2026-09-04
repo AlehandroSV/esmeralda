@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import * as path from "path";
-import { Logger, AppError } from "../utils/logger.js";
+import { Logger, AppError, handleError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
 import { writeFile, ensureDir } from "../core/file-manager.js";
 import { getDatabaseConfig } from "../core/multi-db.js";
@@ -78,20 +78,8 @@ return {
 
         Logger.success(`Seed created: ${filename}`);
         Logger.info(`Edit: ${filePath}`);
-      } catch (error: any) {
-        if (error instanceof AppError) {
-          Logger.error(error.message);
-          if (error.suggestion) {
-            Logger.info(`Suggestion: ${error.suggestion}`);
-          }
-        } else {
-          Logger.error("Failed to create seed file:");
-          Logger.error(error.message);
-        }
-        if (process.env.DEBUG) {
-          console.error(error.stack);
-        }
-        process.exit(1);
+      } catch (error: unknown) {
+        handleError(error);
       }
     });
 }

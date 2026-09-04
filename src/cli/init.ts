@@ -2,7 +2,7 @@ import { Command } from "commander";
 import * as fs from "fs";
 import * as path from "path";
 import * as readline from "readline";
-import { Logger } from "../utils/logger.js";
+import { Logger, AppError, handleError } from "../utils/logger.js";
 import { ensureDir, writeFile, fileExists } from "../core/file-manager.js";
 import { createEmptyState } from "../core/schema-state.js";
 import { escapeLuaString } from "../core/lua-bridge.js";
@@ -1046,9 +1046,7 @@ export function registerInit(program: Command): void {
           const projectPath = path.resolve(process.cwd(), options.name);
 
           if (fileExists(projectPath)) {
-            Logger.error(`Directory "${options.name}" already exists.`);
-            Logger.info("Use `esmeralda init` inside it to initialize Jade.");
-            return;
+            throw AppError.directoryExists(options.name);
           }
 
           ensureDir(projectPath);
@@ -1082,13 +1080,8 @@ export function registerInit(program: Command): void {
           Logger.success("Jade initialized successfully!");
           Logger.info("Add your entities in schema/");
         }
-      } catch (error: any) {
-        Logger.error("Failed to initialize Jade:");
-        Logger.error(error.message);
-        if (process.env.DEBUG) {
-          console.error(error.stack);
-        }
-        process.exit(1);
+      } catch (error: unknown) {
+        handleError(error);
       }
     });
 }
