@@ -10,6 +10,7 @@ import { registerMigrateRollback } from "./cli/migrate-rollback.js";
 import { registerDbPull } from "./cli/db-pull.js";
 import { registerDbPush } from "./cli/db-push.js";
 import { registerSeed } from "./cli/seed.js";
+import { registerSeedCreate } from "./cli/db-seed-create.js";
 import { registerSchemaGenerate, registerSchemaDiff } from "./cli/schema-generate.js";
 import { registerDbSync } from "./cli/db-sync.js";
 
@@ -33,6 +34,7 @@ registerDbPull(db);
 registerDbPush(db);
 registerSchemaDiff(db);
 registerSeed(db);
+registerSeedCreate(db);
 registerDbSync(db);
 registerSchemaGenerate(program);
 
