@@ -14,12 +14,13 @@ interface InitOptions {
 }
 
 export interface DatabaseConfig {
-  driver: "postgresql" | "mysql" | "sqlite";
+  driver: "postgresql" | "mysql" | "sqlite" | "mariadb" | "openresty";
   host: string;
   port: number;
   database: string;
   user: string;
   password: string;
+  ssl?: boolean;
 }
 
 const DEFAULT_CONFIG: DatabaseConfig = {
@@ -924,6 +925,7 @@ export function promptUser(projectName: string): Promise<DatabaseConfig> {
 }
 
 export function generateConfigContent(projectName: string, config: DatabaseConfig): string {
+  const sslLine = config.ssl ? `,\n        ssl = true` : "";
   return `return {
     database = {
         driver = "${escapeLuaString(config.driver)}",
@@ -931,8 +933,18 @@ export function generateConfigContent(projectName: string, config: DatabaseConfi
         port = ${parseInt(String(config.port), 10) || 5432},
         database = "${escapeLuaString(config.database)}",
         user = "${escapeLuaString(config.user)}",
-        password = "${escapeLuaString(config.password)}"
-    }
+        password = "${escapeLuaString(config.password)}"${sslLine}
+        -- ssl_verify = true,
+        -- charset = "utf8",
+        -- pool = { max_size = 10, min_size = 2, idle_timeout = 300 },
+    },
+    -- plugins = {
+    --   { name = "soft-delete" },
+    --   { name = "cache", ttl = 300 },
+    --   { name = "audit" },
+    -- },
+    -- encryption = { key = "change-me", algorithm = "aes" },
+    -- logging = { level = "info", sql = false },
 }
 `;
 }
