@@ -15,6 +15,10 @@ export interface ColumnDef {
   cuidDefault?: boolean;
   /** When true, use nanoid() / 'nanoid'::text as default (like Jade.NanoID) */
   nanoidDefault?: boolean;
+  /** Column uses soft delete pattern */
+  softDelete?: boolean;
+  /** Column is encrypted */
+  encrypted?: boolean;
 }
 
 export { IndexDef } from "./diff-engine.js";
@@ -26,12 +30,34 @@ export interface RelationDef {
   through?: string;
 }
 
+export type CallbackType =
+  | "beforeCreate" | "afterCreate"
+  | "beforeUpdate" | "afterUpdate"
+  | "beforeDelete" | "afterDelete"
+  | "beforeSave" | "afterSave"
+  | "aroundCreate" | "aroundUpdate" | "aroundDelete" | "aroundSave";
+
+export interface ValidationDef {
+  type: "presence" | "uniqueness" | "length" | "format" | "inclusion" | "numericality" | "custom";
+  field: string;
+  options?: Record<string, any>;
+}
+
+export interface ScopeDef {
+  name: string;
+}
+
 export interface EntityDef {
   name: string;
   tableName: string;
   columns: ColumnDef[];
   indexes?: IndexDef[];
   relations?: RelationDef[];
+  callbacks?: CallbackType[];
+  validations?: ValidationDef[];
+  scopes?: ScopeDef[];
+  softDelete?: boolean;
+  optimisticLocking?: boolean;
 }
 
 export interface ValidationError {
@@ -60,10 +86,27 @@ export function parseSchemaFile(content: string): EntityDef[] {
       blockEnd++;
     }
 
+    const entityBlock = content.substring(match.index, blockEnd);
     const columnsBlock = content.substring(blockStart, blockEnd - 1);
     const columns = parseColumns(columnsBlock);
     const indexes = parseIndexes(columnsBlock);
     const relations = parseRelations(columnsBlock);
+
+    // Parse entity-level features from outside the column block
+    const callbacks = parseCallbacks(entityBlock);
+    const validations = parseValidations(entityBlock);
+    const scopes = parseScopes(entityBlock);
+    const softDelete = /softDelete\s*\(\s*\)/.test(entityBlock);
+    const optimisticLocking = /optimisticLocking\s*\(\s*\)/.test(entityBlock);
+
+    // Mark soft delete columns
+    if (softDelete) {
+      for (const col of columns) {
+        if (col.name === "deleted_at" || col.name === "deleted") {
+          col.softDelete = true;
+        }
+      }
+    }
 
     // Infer entity name from table name
     const name = tableName.charAt(0).toUpperCase() + tableName.slice(1);
@@ -74,6 +117,11 @@ export function parseSchemaFile(content: string): EntityDef[] {
       columns,
       indexes: indexes.length > 0 ? indexes : undefined,
       relations: relations.length > 0 ? relations : undefined,
+      callbacks: callbacks.length > 0 ? callbacks : undefined,
+      validations: validations.length > 0 ? validations : undefined,
+      scopes: scopes.length > 0 ? scopes : undefined,
+      softDelete: softDelete || undefined,
+      optimisticLocking: optimisticLocking || undefined,
     });
   }
 
@@ -127,6 +175,7 @@ function parseColumns(block: string): ColumnDef[] {
       if (modifiers.includes("primaryKey")) column.primaryKey = true;
       if (modifiers.includes("unique")) column.unique = true;
       if (modifiers.includes("notNull")) column.notNull = true;
+      if (modifiers.includes("encrypted")) column.encrypted = true;
 
       const defaultMatch = modifiers.match(/default\s*\(([^)]+)\)/);
       if (defaultMatch) {
@@ -197,6 +246,60 @@ function parseRelations(block: string): RelationDef[] {
   }
 
   return relations;
+}
+
+const CALLBACK_TYPES: CallbackType[] = [
+  "beforeCreate", "afterCreate", "beforeUpdate", "afterUpdate",
+  "beforeDelete", "afterDelete", "beforeSave", "afterSave",
+  "aroundCreate", "aroundUpdate", "aroundDelete", "aroundSave",
+];
+
+function parseCallbacks(block: string): CallbackType[] {
+  const found: CallbackType[] = [];
+  for (const cb of CALLBACK_TYPES) {
+    if (new RegExp(cb + "\\s*\\(").test(block)) {
+      found.push(cb);
+    }
+  }
+  return found;
+}
+
+function parseValidations(block: string): ValidationDef[] {
+  const validations: ValidationDef[] = [];
+  const patterns: Array<{ regex: RegExp; type: ValidationDef["type"] }> = [
+    { regex: /validatePresenceOf\s*\(\s*["'](\w+)["']/g, type: "presence" },
+    { regex: /validateUniquenessOf\s*\(\s*["'](\w+)["']/g, type: "uniqueness" },
+    { regex: /validateLengthOf\s*\(\s*["'](\w+)["']/g, type: "length" },
+    { regex: /validateFormatOf\s*\(\s*["'](\w+)["']/g, type: "format" },
+    { regex: /validateInclusionOf\s*\(\s*["'](\w+)["']/g, type: "inclusion" },
+    { regex: /validateNumericalityOf\s*\(\s*["'](\w+)["']/g, type: "numericality" },
+  ];
+
+  for (const { regex, type } of patterns) {
+    let match;
+    while ((match = regex.exec(block)) !== null) {
+      validations.push({ type, field: match[1] });
+    }
+  }
+
+  // Custom validations: validateCustom("name", ...)
+  const customRegex = /validateCustom\s*\(\s*["'](\w+)["']/g;
+  let customMatch;
+  while ((customMatch = customRegex.exec(block)) !== null) {
+    validations.push({ type: "custom", field: customMatch[1] });
+  }
+
+  return validations;
+}
+
+function parseScopes(block: string): ScopeDef[] {
+  const scopes: ScopeDef[] = [];
+  const scopeRegex = /scope\s*\(\s*["'](\w+)["']/g;
+  let match;
+  while ((match = scopeRegex.exec(block)) !== null) {
+    scopes.push({ name: match[1] });
+  }
+  return scopes;
 }
 
 export function mapType(typeName: string): string {
