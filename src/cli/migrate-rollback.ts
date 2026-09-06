@@ -6,6 +6,11 @@ import { findProjectRoot } from "../core/project.js";
 import { LuaBridge } from "../core/lua-bridge.js";
 import { getConfigPathForEnv, LUA_CONFIG_LOAD } from "../core/config.js";
 
+function hasDockerCompose(projectRoot: string): boolean {
+  return fs.existsSync(path.join(projectRoot, "docker-compose.yml")) ||
+         fs.existsSync(path.join(projectRoot, "docker-compose.yaml"));
+}
+
 interface RollbackOptions {
   steps?: string;
   database?: string;
@@ -41,6 +46,11 @@ export function registerMigrateRollback(migrate: Command): void {
         }
 
         const steps = parseInt(options.steps || "1", 10);
+        const useDocker = hasDockerCompose(projectRoot);
+
+        if (useDocker) {
+          Logger.info("Using Docker for rollback");
+        }
 
         Logger.info(`Rolling back ${steps} migration(s)...`);
 
@@ -55,11 +65,11 @@ jade.migration.init(jade.driver())
 jade.migration.rollback(jade.driver(), ARGS.steps)
         `;
 
-        await bridge.executeSafe(script, {
-          configPath,
-          envConfigPath,
-          steps,
-        });
+        if (useDocker) {
+          await bridge.executeSafeDocker(script, { configPath, envConfigPath, steps }, projectRoot);
+        } else {
+          await bridge.executeSafe(script, { configPath, envConfigPath, steps });
+        }
 
         Logger.success("Rollback complete!");
       } catch (error: unknown) {
