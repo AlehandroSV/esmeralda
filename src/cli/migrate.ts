@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { Logger, AppError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
-import { LuaBridge } from "../core/lua-bridge.js";
+import { LuaBridge, LUA_JSON_ENCODER } from "../core/lua-bridge.js";
 
 interface MigrateOptions {
   preview?: boolean;
@@ -183,12 +183,13 @@ print("Applied " .. success_count .. " migration(s)")
 
         // Use Jade's migration.status() which is driver-aware
         const script = `
+${LUA_JSON_ENCODER}
 local jade = require("jade")
 local config = dofile(ARGS.configPath)
 jade.configure(config)
 jade.migration.init(jade.driver())
 local status = jade.migration.status(jade.driver())
-print(require("dkjson").encode(status))
+print(_json_encode(status))
         `;
 
         let statusResult: { executed: string[]; pending: string[] };

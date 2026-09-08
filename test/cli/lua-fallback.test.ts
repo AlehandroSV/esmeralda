@@ -52,7 +52,7 @@ describe("Lua binary detection in Docker", () => {
       path.join(__dirname, "../../src/cli/migrate.ts"),
       "utf-8"
     );
-    expect(migrateSource).toContain('import { LuaBridge }');
+    expect(migrateSource).toContain('import { LuaBridge');
     expect(migrateSource).toContain('new LuaBridge()');
     expect(migrateSource).not.toContain('import { execFile }');
   });
@@ -72,7 +72,7 @@ describe("Lua binary detection in Docker", () => {
       path.join(__dirname, "../../src/cli/db-sync.ts"),
       "utf-8"
     );
-    expect(source).toContain('import { LuaBridge }');
+    expect(source).toContain('import { LuaBridge');
     expect(source).toContain('new LuaBridge()');
     expect(source).not.toContain('import { execFile }');
   });
