@@ -9,6 +9,8 @@ import { registerMigrateCreate } from "../cli/migrate-create.js";
 import { registerMigrateRollback } from "../cli/migrate-rollback.js";
 import { registerDbPull } from "../cli/db-pull.js";
 import { registerDbPush } from "../cli/db-push.js";
+import { registerDbSync } from "../cli/db-sync.js";
+import { registerSchemaGenerate, registerSchemaDiff } from "../cli/schema-generate.js";
 import { registerSeed } from "../cli/seed.js";
 import { registerSeedCreate } from "../cli/db-seed-create.js";
 
@@ -24,12 +26,15 @@ program
 
 registerInit(program);
 registerGenerate(program);
+registerSchemaGenerate(program);
 const migrate = registerMigrate(program);
 registerMigrateCreate(migrate);
 registerMigrateRollback(migrate);
 const db = program.command("db").description("Database operations");
 registerDbPull(db);
 registerDbPush(db);
+registerDbSync(db);
+registerSchemaDiff(db);
 registerSeed(db);
 registerSeedCreate(db);
 
