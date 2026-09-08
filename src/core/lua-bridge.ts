@@ -7,6 +7,30 @@ import * as os from "os";
 const exec = promisify(execFile);
 
 /**
+ * Convert a JavaScript value to a Lua table literal string.
+ * Unlike JSON.stringify, this produces valid Lua syntax (= instead of :, etc.)
+ */
+function toLuaTable(value: any): string {
+  if (value === null || value === undefined) return "nil";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number") return String(value);
+  if (typeof value === "string") {
+    return '"' + value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r") + '"';
+  }
+  if (Array.isArray(value)) {
+    const items = value.map(toLuaTable).join(", ");
+    return `{${items}}`;
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value)
+      .map(([k, v]) => `["${k}"] = ${toLuaTable(v)}`)
+      .join(", ");
+    return `{${entries}}`;
+  }
+  return "nil";
+}
+
+/**
  * Escape a string for safe embedding in a Lua string literal (double-quoted).
  * Handles backslashes, double quotes, single quotes, newlines, carriage returns, and null bytes.
  */
@@ -45,7 +69,7 @@ export class LuaBridge {
   async executeSafe(code: string, args: Record<string, any> = {}): Promise<{ stdout: string; stderr: string }> {
     const tmpFile = path.join(os.tmpdir(), `jade_lua_${Date.now()}_${Math.random().toString(36).slice(2)}.lua`);
     try {
-      const argsLua = `ARGS = ${JSON.stringify(args)}`;
+      const argsLua = `ARGS = ${toLuaTable(args)}`;
       const fullCode = argsLua + "\n" + code;
       fs.writeFileSync(tmpFile, fullCode, "utf-8");
       const { stdout, stderr } = await exec(this.luaPath, [tmpFile]);
@@ -75,7 +99,7 @@ export class LuaBridge {
     const tmpFile = path.join(os.tmpdir(), `jade_lua_${Date.now()}_${Math.random().toString(36).slice(2)}.lua`);
     const containerTmp = `/tmp/jade_lua_${Date.now()}.lua`;
     try {
-      const argsLua = `ARGS = ${JSON.stringify(args)}`;
+      const argsLua = `ARGS = ${toLuaTable(args)}`;
       const fullCode = argsLua + "\n" + code;
       fs.writeFileSync(tmpFile, fullCode, "utf-8");
 
