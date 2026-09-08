@@ -12,6 +12,27 @@ interface SchemaGenerateOptions {
   output?: string;
 }
 
+/** Find Jade source directory by searching parent directories */
+function findJadeSource(projectRoot: string): string | null {
+  // Check common relative paths from project root
+  const candidates = [
+    path.join(projectRoot, "jade", "src"),
+    path.join(projectRoot, "..", "jade", "src"),
+    path.join(projectRoot, "..", "..", "jade", "src"),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, "jade", "init.lua"))) {
+      return candidate;
+    }
+  }
+  // Check JADE_PATH environment variable
+  const envPath = process.env.JADE_PATH;
+  if (envPath && fs.existsSync(path.join(envPath, "jade", "init.lua"))) {
+    return envPath;
+  }
+  return null;
+}
+
 export function registerGenerate(program: Command): void {
   program
     .command("generate")
@@ -61,7 +82,12 @@ export function registerGenerate(program: Command): void {
         Logger.info(`  Using: ${path.relative(projectRoot, schemaDefPath)}`);
 
         const outputDir = options.output || "schema";
-        const luaPackagePath = projectRoot.replace(/\\/g, "/") + "/?.lua;" + projectRoot.replace(/\\/g, "/") + "/?/init.lua";
+        const jadeSrc = findJadeSource(projectRoot);
+        const luaPackagePath = [
+          projectRoot.replace(/\\/g, "/") + "/?.lua",
+          projectRoot.replace(/\\/g, "/") + "/?/init.lua",
+          ...(jadeSrc ? [jadeSrc.replace(/\\/g, "/") + "/?.lua", jadeSrc.replace(/\\/g, "/") + "/?/init.lua"] : []),
+        ].join(";");
         const bridge = new LuaBridge("lua", luaPackagePath);
         const { configPath, envConfigPath } = getConfigPathForEnv(projectRoot);
 
