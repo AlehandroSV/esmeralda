@@ -145,14 +145,14 @@ print('[' .. table.concat(parts, ',') .. ']')
           migrationName,
         });
 
-        // Write model files to jade/models/
-        const modelsDir = path.join(projectRoot, "jade", "models");
+        // Write model files to jade/generated/
+        const modelsDir = path.join(projectRoot, "jade", "generated");
         fs.mkdirSync(modelsDir, { recursive: true });
 
         for (const file of result.models) {
           const filePath = path.join(modelsDir, file.filename);
           fs.writeFileSync(filePath, file.content, "utf-8");
-          Logger.info(`  Generated: jade/models/${file.filename}`);
+          Logger.info(`  Generated: jade/generated/${file.filename}`);
         }
 
         // Write migration file
