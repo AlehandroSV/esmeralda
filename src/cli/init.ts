@@ -935,7 +935,17 @@ export function generateConfigContent(projectName: string, config: DatabaseConfi
         database = "${escapeLuaString(config.database)}",
         user = "${escapeLuaString(config.user)}",
         password = "${escapeLuaString(config.password)}"${sslLine}
-    }
+        -- ssl_verify = true,
+        -- charset = "utf8",
+        -- pool = { max_size = 10, min_size = 2, idle_timeout = 300 },
+    },
+    -- plugins = {
+    --   { name = "soft-delete" },
+    --   { name = "cache", ttl = 300 },
+    --   { name = "audit" },
+    -- },
+    -- encryption = { key = "change-me", algorithm = "aes" },
+    -- logging = { level = "info", sql = false },
 }
 `;
 }
