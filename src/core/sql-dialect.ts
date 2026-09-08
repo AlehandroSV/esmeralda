@@ -16,6 +16,8 @@ export interface SQLDialect {
   tableListQuery(): string;
   columnListQuery(tableName: string): string;
   foreignKeyQuery(tableName: string): string;
+  uniqueConstraintsQuery(tableName: string): string;
+  indexListQuery(tableName: string): string;
 }
 
 /* ─── PostgreSQL ─────────────────────────────────────────────── */
@@ -85,6 +87,16 @@ class PostgreSQLDialect implements SQLDialect {
   foreignKeyQuery(tableName: string): string {
     const safe = tableName.replace(/'/g, "''");
     return `SELECT tc.constraint_name, kcu.column_name, ccu.table_name AS foreign_table_name, ccu.column_name AS foreign_column_name FROM information_schema.table_constraints AS tc JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name JOIN information_schema.constraint_column_usage AS ccu ON ccu.constraint_name = tc.constraint_name WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name = '${safe}' AND tc.table_schema = 'public'`;
+  }
+
+  uniqueConstraintsQuery(tableName: string): string {
+    const safe = tableName.replace(/'/g, "''");
+    return `SELECT tc.constraint_name, kcu.column_name FROM information_schema.table_constraints AS tc JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name WHERE tc.constraint_type = 'UNIQUE' AND tc.table_name = '${safe}' AND tc.table_schema = 'public' ORDER BY tc.constraint_name, kcu.ordinal_position`;
+  }
+
+  indexListQuery(tableName: string): string {
+    const safe = tableName.replace(/'/g, "''");
+    return `SELECT indexname AS index_name, indexdef AS definition FROM pg_indexes WHERE tablename = '${safe}' AND schemaname = 'public'`;
   }
 }
 
@@ -156,6 +168,16 @@ class MySQLDialect implements SQLDialect {
     const safe = tableName.replace(/'/g, "''");
     return `SELECT tc.constraint_name, kcu.column_name, ccu.table_name AS foreign_table_name, ccu.column_name AS foreign_column_name FROM information_schema.table_constraints AS tc JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name JOIN information_schema.constraint_column_usage AS ccu ON ccu.constraint_name = tc.constraint_name WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name = '${safe}' AND tc.table_schema = DATABASE()`;
   }
+
+  uniqueConstraintsQuery(tableName: string): string {
+    const safe = tableName.replace(/'/g, "''");
+    return `SELECT tc.constraint_name, kcu.column_name FROM information_schema.table_constraints AS tc JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name WHERE tc.constraint_type = 'UNIQUE' AND tc.table_name = '${safe}' AND tc.table_schema = DATABASE() ORDER BY tc.constraint_name, kcu.ordinal_position`;
+  }
+
+  indexListQuery(tableName: string): string {
+    const safe = tableName.replace(/'/g, "''");
+    return `SHOW INDEX FROM \`${safe}\``;
+  }
 }
 
 /* ─── SQLite ────────────────────────────────────────────────── */
@@ -224,6 +246,16 @@ class SQLiteDialect implements SQLDialect {
   foreignKeyQuery(tableName: string): string {
     const safe = tableName.replace(/'/g, "''");
     return `PRAGMA foreign_key_list('${safe}')`;
+  }
+
+  uniqueConstraintsQuery(tableName: string): string {
+    const safe = tableName.replace(/'/g, "''");
+    return `PRAGMA index_list('${safe}')`;
+  }
+
+  indexListQuery(tableName: string): string {
+    const safe = tableName.replace(/'/g, "''");
+    return `PRAGMA index_list('${safe}')`;
   }
 }
 
