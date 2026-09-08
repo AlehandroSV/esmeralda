@@ -18,7 +18,8 @@ export function registerSchemaGenerate(program: Command): void {
     .description("Generate schema files from declarative schema definition")
     .option("-n, --name <name>", "Schema name (default: schema)")
     .option("-o, --output <dir>", "Output directory (default: schema/)")
-    .action(async (options: SchemaGenerateOptions) => {
+    .option("-f, --file <path>", "Schema file path (default: auto-detect)")
+    .action(async (options: SchemaGenerateOptions & { file?: string }) => {
       try {
         const projectRoot = findProjectRoot();
         if (!projectRoot) {
@@ -27,40 +28,60 @@ export function registerSchemaGenerate(program: Command): void {
 
         Logger.info("Generating schema from declarative definition...");
 
-        const schemaDefPath = path.join(projectRoot, "schema.lua");
+        // Find schema file: explicit flag > .jade in schema/ > schema.lua
+        let schemaDefPath: string;
+        if (options.file) {
+          schemaDefPath = path.resolve(projectRoot, options.file);
+        } else {
+          const jadeDir = path.join(projectRoot, "schema");
+          const jadeFiles = fs.existsSync(jadeDir)
+            ? fs.readdirSync(jadeDir).filter(f => f.endsWith(".jade"))
+            : [];
+          if (jadeFiles.length > 0) {
+            schemaDefPath = path.join(jadeDir, jadeFiles[0]);
+          } else {
+            schemaDefPath = path.join(projectRoot, "schema.lua");
+          }
+        }
+
         if (!fs.existsSync(schemaDefPath)) {
-          throw AppError.schemaFileNotFound();
-          Logger.info("Example:");
-          Logger.info(`
-local Jade = require("jade")
-
-local schema = Jade.Declarative.define(function(d)
-    d:model("User", {
-        name = "string",
-        email = "string(100)",
-        validations = {
-            name = { presence = true },
-            email = { uniqueness = true },
-        },
-    }):model("Post", {
-        title = "string",
-        body = "text",
-        relations = {
-            user = { type = "belongsTo", model = "User" },
-        },
-    })
-end)
-
-return schema
-`);
+          Logger.error("Schema file not found.");
+          Logger.info("");
+          Logger.info("Expected one of:");
+          Logger.info("  - schema/models.jade  (declarative .jade file)");
+          Logger.info("  - schema.lua          (Lua table format)");
+          Logger.info("");
+          Logger.info("Or specify explicitly:");
+          Logger.info("  esmeralda schema-generate -f path/to/schema.jade");
           process.exit(1);
         }
+
+        const isJade = schemaDefPath.endsWith(".jade");
+        Logger.info(`  Using: ${path.relative(projectRoot, schemaDefPath)}`);
 
         const outputDir = options.output || "schema";
         const bridge = new LuaBridge();
         const { configPath, envConfigPath } = getConfigPathForEnv(projectRoot);
 
-        const script = `
+        let script: string;
+        if (isJade) {
+          // Parse .jade file using Jade's Declarative parser
+          const jadeContent = fs.readFileSync(schemaDefPath, "utf-8").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
+          script = `
+local jade = require("jade")
+${LUA_CONFIG_LOAD}
+jade.configure(_cfg)
+local schema = jade.Declarative.parsedeclarativeSchema("${jadeContent}")
+local files = jade.Declarative.toLuaFiles({ models = schema.models })
+local result = {}
+for filename, content in pairs(files) do
+    table.insert(result, { filename = filename, content = content })
+end
+print(require("dkjson").encode(result))
+          `;
+        } else {
+          // Parse schema.lua using dofile
+          script = `
 local jade = require("jade")
 ${LUA_CONFIG_LOAD}
 jade.configure(_cfg)
@@ -71,7 +92,8 @@ for filename, content in pairs(files) do
     table.insert(result, { filename = filename, content = content })
 end
 print(require("dkjson").encode(result))
-        `;
+          `;
+        }
 
         const files: Array<{ filename: string; content: string }> = await bridge.executeSafeJson(script, {
           configPath,
@@ -99,6 +121,21 @@ interface SchemaDiffOptions {
   preview?: boolean;
 }
 
+function findSchemaFile(projectRoot: string): { path: string; isJade: boolean } | null {
+  const schemaDir = path.join(projectRoot, "schema");
+  if (fs.existsSync(schemaDir)) {
+    const jadeFiles = fs.readdirSync(schemaDir).filter(f => f.endsWith(".jade"));
+    if (jadeFiles.length > 0) {
+      return { path: path.join(schemaDir, jadeFiles[0]), isJade: true };
+    }
+  }
+  const luaPath = path.join(projectRoot, "schema.lua");
+  if (fs.existsSync(luaPath)) {
+    return { path: luaPath, isJade: false };
+  }
+  return null;
+}
+
 function schemaDiffAction(options: SchemaDiffOptions): void {
   (async () => {
     try {
@@ -111,11 +148,18 @@ function schemaDiffAction(options: SchemaDiffOptions): void {
 
       const bridge = new LuaBridge();
       const { configPath, envConfigPath } = getConfigPathForEnv(projectRoot);
-      const schemaLuaPath = path.join(projectRoot, "schema.lua");
+      const schemaFile = findSchemaFile(projectRoot);
       const schemaDir = path.join(projectRoot, "schema");
 
+      if (!schemaFile) {
+        Logger.error("No schema file found. Create schema/models.jade or schema.lua.");
+        process.exit(1);
+      }
+
+      Logger.info(`  Using: ${path.relative(projectRoot, schemaFile.path)}`);
+
       // Support both schema.lua (declarative) and schema/ (entity files)
-      const useSchemaDir = !fs.existsSync(schemaLuaPath) && fs.existsSync(schemaDir);
+      const useSchemaDir = !schemaFile && fs.existsSync(schemaDir);
 
       if (useSchemaDir) {
         // Read schema from entity files in schema/ directory
@@ -137,6 +181,17 @@ function schemaDiffAction(options: SchemaDiffOptions): void {
         Logger.info(`Found ${entities.length} entities in schema/`);
         Logger.info("Use 'esmeralda db sync' to compare and apply changes.");
         return;
+      }
+
+      const schemaPath = schemaFile.path;
+      const isJade = schemaFile.isJade;
+
+      let schemaLoadLua: string;
+      if (isJade) {
+        const jadeContent = fs.readFileSync(schemaPath, "utf-8").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
+        schemaLoadLua = `local parsed = jade.Declarative.parsedeclarativeSchema("${jadeContent}")\nlocal schema_def = { models = parsed.models }`;
+      } else {
+        schemaLoadLua = `local schema_def = dofile(ARGS.schemaPath)`;
       }
 
       const script = `
@@ -173,7 +228,7 @@ for _, row in ipairs(tables) do
     }
 end
 
-local schema_def = dofile(ARGS.schemaLuaPath)
+${schemaLoadLua}
 local diff = jade.Declarative.diff(current_schema, schema_def)
 print(require("dkjson").encode(diff))
       `;
@@ -181,7 +236,7 @@ print(require("dkjson").encode(diff))
       const diff = await bridge.executeSafeJson(script, {
         configPath,
         envConfigPath,
-        schemaLuaPath,
+        schemaPath,
       });
 
       if (diff.tables_to_create.length > 0) {
