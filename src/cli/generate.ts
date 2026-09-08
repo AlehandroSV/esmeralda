@@ -39,9 +39,10 @@ export function registerGenerate(program: Command): void {
     .description("Generate migration from .jade schema (standard)")
     .option("-n, --name <name>", "Migration name")
     .option("--preview", "Preview SQL without generating file")
+    .option("--run", "Generate and immediately run the migration")
     .option("-o, --output <dir>", "Output directory (default: schema/)")
     .option("-f, --file <path>", "Schema file path (default: auto-detect)")
-    .action(async (options: SchemaGenerateOptions & { file?: string; preview?: boolean }) => {
+    .action(async (options: SchemaGenerateOptions & { file?: string; preview?: boolean; run?: boolean }) => {
       try {
         const projectRoot = findProjectRoot();
         if (!projectRoot) {
@@ -159,11 +160,33 @@ print('[' .. table.concat(parts, ',') .. ']')
         const timestamp = Date.now().toString();
         const migrationDir = path.join(projectRoot, "migrations");
         fs.mkdirSync(migrationDir, { recursive: true });
-        const migrationFile = path.join(migrationDir, `${timestamp}_${migrationName}.lua`);
+        const migrationFilename = `${timestamp}_${migrationName}.lua`;
+        const migrationFile = path.join(migrationDir, migrationFilename);
         fs.writeFileSync(migrationFile, result.migration, "utf-8");
-        Logger.info(`  Generated: migrations/${timestamp}_${migrationName}.lua`);
+        Logger.info(`  Generated: migrations/${migrationFilename}`);
 
         Logger.success(`Generated ${result.models.length} model(s) + migration`);
+
+        // Run migration immediately if --run flag
+        if (options.run) {
+          Logger.info("Running migration...");
+          const runScript = `
+${LUA_JSON_ENCODER}
+local jade = require("jade")
+${LUA_CONFIG_LOAD}
+jade.configure(_cfg)
+jade.migration.init(jade.driver())
+local migration = dofile(ARGS.migrationPath)
+migration.up()
+print("OK")
+          `;
+          await bridge.executeSafe(runScript, {
+            configPath,
+            envConfigPath,
+            migrationPath: migrationFile.replace(/\\/g, "/"),
+          });
+          Logger.success("Migration applied");
+        }
       } catch (error: unknown) {
         handleError(error);
       }
