@@ -3,14 +3,14 @@ import { Command } from "commander";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { registerInit } from "../cli/init.js";
-import { registerGenerate } from "../cli/generate.js";
+import { registerGenerate, registerSchemaDiff } from "../cli/generate.js";
+import { registerGenerateLegacy } from "../cli/generate-legacy.js";
 import { registerMigrate } from "../cli/migrate.js";
 import { registerMigrateCreate } from "../cli/migrate-create.js";
 import { registerMigrateRollback } from "../cli/migrate-rollback.js";
 import { registerDbPull } from "../cli/db-pull.js";
 import { registerDbPush } from "../cli/db-push.js";
 import { registerDbSync } from "../cli/db-sync.js";
-import { registerSchemaGenerate, registerSchemaDiff } from "../cli/schema-generate.js";
 import { registerSeed } from "../cli/seed.js";
 import { registerSeedCreate } from "../cli/db-seed-create.js";
 
@@ -26,7 +26,7 @@ program
 
 registerInit(program);
 registerGenerate(program);
-registerSchemaGenerate(program);
+registerGenerateLegacy(program);
 const migrate = registerMigrate(program);
 registerMigrateCreate(migrate);
 registerMigrateRollback(migrate);
