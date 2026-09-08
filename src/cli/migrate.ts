@@ -10,11 +10,6 @@ interface MigrateOptions {
   database?: string;
 }
 
-interface RollbackOptions {
-  steps?: number;
-  database?: string;
-}
-
 function hasDockerCompose(projectRoot: string): boolean {
   return fs.existsSync(path.join(projectRoot, "docker-compose.yml")) ||
          fs.existsSync(path.join(projectRoot, "docker-compose.yaml"));
@@ -158,57 +153,6 @@ print("Applied " .. success_count .. " migration(s)")
         if (process.env.DEBUG) {
           console.error(error.stack);
         }
-        process.exit(1);
-      }
-    });
-
-  // Rollback command
-  migrate
-    .command("rollback")
-    .description("Rollback the last N migrations")
-    .option("-n, --steps <number>", "Number of migrations to rollback", "1")
-    .option("-d, --database <name>", "Database to rollback")
-    .action(async (options: RollbackOptions) => {
-      try {
-        const projectRoot = findProjectRoot();
-        if (!projectRoot) {
-          throw AppError.notInitialized();
-        }
-
-        const steps = parseInt(String(options.steps), 10) || 1;
-        const useDocker = hasDockerCompose(projectRoot);
-        const configPath = path.join(projectRoot, "jade.config.lua");
-        const bridge = new LuaBridge();
-
-        Logger.info(`Rolling back ${steps} migration(s) via Jade...`);
-
-        const script = `
-local jade = require("jade")
-local config = dofile(ARGS.configPath)
-jade.configure(config)
-jade.migration.init(jade.driver())
-
-local result = jade.migration.rollback(jade.driver(), { steps = ARGS.steps })
-for _, r in ipairs(result) do
-  if r.success then
-    print("  Rolled back: " .. r.name)
-  else
-    print("  FAILED: " .. r.name .. " - " .. tostring(r.error))
-  end
-end
-        `;
-
-        if (useDocker) {
-          await bridge.executeSafeDocker(script, { configPath, steps }, projectRoot);
-        } else {
-          await bridge.executeSafe(script, { configPath, steps });
-        }
-
-        Logger.success("Rollback complete!");
-      } catch (error: any) {
-        Logger.error("Rollback failed:");
-        Logger.error(error.message);
-        if (process.env.DEBUG) console.error(error.stack);
         process.exit(1);
       }
     });
