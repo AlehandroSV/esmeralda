@@ -92,7 +92,7 @@ describe("Lua binary detection in Docker", () => {
       path.join(__dirname, "../../src/cli/generate.ts"),
       "utf-8"
     );
-    expect(source).toContain('import { LuaBridge }');
+    expect(source).toContain('import { LuaBridge');
     expect(source).toContain('new LuaBridge()');
     expect(source).not.toContain('import { execFile }');
   });
