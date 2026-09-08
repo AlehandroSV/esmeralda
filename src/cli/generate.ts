@@ -61,7 +61,8 @@ export function registerGenerate(program: Command): void {
         Logger.info(`  Using: ${path.relative(projectRoot, schemaDefPath)}`);
 
         const outputDir = options.output || "schema";
-        const bridge = new LuaBridge();
+        const luaPackagePath = projectRoot.replace(/\\/g, "/") + "/?.lua;" + projectRoot.replace(/\\/g, "/") + "/?/init.lua";
+        const bridge = new LuaBridge("lua", luaPackagePath);
         const { configPath, envConfigPath } = getConfigPathForEnv(projectRoot);
 
         let script: string;
