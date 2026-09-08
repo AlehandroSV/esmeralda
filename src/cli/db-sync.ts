@@ -8,7 +8,7 @@ import { loadState, saveState } from "../core/schema-state.js";
 import { DiffEngine, type TableDef, type ColumnDef, type DiffResult } from "../core/diff-engine.js";
 import { ensureDir } from "../core/file-manager.js";
 import { detectDriver, getDialect, type SQLDialect, type DriverKind } from "../core/sql-dialect.js";
-import { LuaBridge } from "../core/lua-bridge.js";
+import { LuaBridge, LUA_JSON_ENCODER } from "../core/lua-bridge.js";
 
 /** Generate a 14-digit timestamp compatible with Jade's os.date("%Y%m%d%H%M%S") */
 function jadeTimestamp(): string {
@@ -25,6 +25,7 @@ async function introspectDatabase(projectRoot: string, dialect: SQLDialect, driv
 
   // Get table list
   const listScript = `
+    ${LUA_JSON_ENCODER}
     local jade = require("jade")
     local cfg = dofile(ARGS.configPath)
     jade.configure(cfg)
@@ -33,7 +34,7 @@ async function introspectDatabase(projectRoot: string, dialect: SQLDialect, driv
     for _, r in ipairs(rows) do
       ${tableListExtractor(driverKind)}
     end
-    print(require("dkjson").encode(names))
+    print(_json_encode(names))
   `;
 
   const tableNames = await bridge.executeSafeJson<string[]>(listScript, {
@@ -44,11 +45,12 @@ async function introspectDatabase(projectRoot: string, dialect: SQLDialect, driv
 
   for (const tname of tableNames) {
     const colScript = `
+      ${LUA_JSON_ENCODER}
       local jade = require("jade")
       local cfg = dofile(ARGS.configPath)
       jade.configure(cfg)
       local cols = jade.driver():execute(ARGS.query)
-      print(require("dkjson").encode(cols))
+      print(_json_encode(cols))
     `;
 
     const rawCols = await bridge.executeSafeJson<any[]>(colScript, {

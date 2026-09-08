@@ -54,6 +54,32 @@ export function validateLuaIdentifier(name: string): void {
   }
 }
 
+/** Simple JSON encoder Lua snippet — no external dependencies */
+export const LUA_JSON_ENCODER = `
+local function _json_encode(v)
+  if v == nil then return "null" end
+  local t = type(v)
+  if t == "boolean" then return tostring(v) end
+  if t == "number" then return tostring(v) end
+  if t == "string" then
+    return '"' .. v:gsub('\\\\', '\\\\\\\\'):gsub('"', '\\\\"'):gsub('\\n', '\\\\n'):gsub('\\r', '\\\\r'):gsub('\\t', '\\\\t') .. '"'
+  end
+  if t == "table" then
+    local isArray = #v > 0 or next(v) == nil
+    if isArray then
+      local parts = {}
+      for _, item in ipairs(v) do parts[#parts+1] = _json_encode(item) end
+      return '[' .. table.concat(parts, ',') .. ']'
+    else
+      local parts = {}
+      for k, val in pairs(v) do parts[#parts+1] = '"' .. tostring(k) .. '":' .. _json_encode(val) end
+      return '{' .. table.concat(parts, ',') .. '}'
+    end
+  end
+  return "null"
+end
+`;
+
 export class LuaBridge {
   private luaPath: string;
   private luaPackagePath: string;
