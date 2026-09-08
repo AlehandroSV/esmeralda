@@ -87,9 +87,9 @@ describe("Lua binary detection in Docker", () => {
     expect(source).not.toContain('import { execFile }');
   });
 
-  it("schema-generate.ts: uses LuaBridge instead of direct exec", () => {
+  it("generate.ts: uses LuaBridge instead of direct exec", () => {
     const source = fs.readFileSync(
-      path.join(__dirname, "../../src/cli/schema-generate.ts"),
+      path.join(__dirname, "../../src/cli/generate.ts"),
       "utf-8"
     );
     expect(source).toContain('import { LuaBridge }');
