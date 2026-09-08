@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Command } from "commander";
-import { registerSchemaDiff } from "../../src/cli/schema-generate.js";
+import { registerSchemaDiff } from "../../src/cli/generate.js";
 
 describe("db diff command", () => {
   it("registers diff command under db subcommand", () => {
