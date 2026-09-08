@@ -36,6 +36,8 @@ const DRIVER_DEFAULTS: Record<string, { port: number; user: string }> = {
   postgresql: { port: 5432, user: "postgres" },
   mysql: { port: 3306, user: "root" },
   sqlite: { port: 0, user: "" },
+  mariadb: { port: 3306, user: "root" },
+  openresty: { port: 5432, user: "postgres" },
 };
 
 /* ─── Template definitions ─────────────────────────────────────── */
@@ -644,7 +646,7 @@ function extraFilesForFeatures(
   const entries: FileEntry[] = [];
 
   if (enabled.includes("docker")) {
-    const dbImage = driver === "mysql" ? "mysql:8" : "postgres:15-alpine";
+    const dbImage = driver === "mysql" || driver === "mariadb" ? (driver === "mariadb" ? "mariadb:11" : "mysql:8") : "postgres:15-alpine";
     entries.push({
       path: "Dockerfile",
       content: `FROM node:20-alpine AS base
@@ -662,6 +664,7 @@ ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["lua", "src/app.lua"]
 `,
     });
+    const isMysql = driver === "mysql" || driver === "mariadb";
     entries.push({
       path: "docker-compose.yml",
       content: `version: "3.8"
@@ -671,15 +674,13 @@ services:
     ports: ["8080:8080"]
     depends_on: [db]
     environment:
-      DB_HOST: ${driver === "mysql" ? "127.0.0.1" : "localhost"}
+      DB_HOST: ${isMysql ? "127.0.0.1" : "localhost"}
       DB_NAME: ${database}
   db:
     image: ${dbImage}
     environment:
-      POSTGRES_USER: ${user}
-      POSTGRES_PASSWORD: ${pass}
-      POSTGRES_DB: ${database}
-    volumes: ["db-data:/var/lib/postgresql/data"]
+      ${isMysql ? `MYSQL_ROOT_PASSWORD: ${pass}\n      MYSQL_DATABASE: ${database}` : `POSTGRES_USER: ${user}\n      POSTGRES_PASSWORD: ${pass}\n      POSTGRES_DB: ${database}`}
+    volumes: ["db-data:/var/lib/${isMysql ? "mysql" : "postgresql"}/data"]
 volumes:
   db-data:
 `,
@@ -901,7 +902,7 @@ export function promptUser(projectName: string): Promise<DatabaseConfig> {
       Logger.info("Press Enter to accept defaults (shown in parentheses)\n");
 
       const name = await ask("Project name", projectName);
-      const driver = (await ask("Database driver (postgresql, mysql, sqlite)", DEFAULT_CONFIG.driver)) as DatabaseConfig["driver"];
+      const driver = (await ask("Database driver (postgresql, mysql, sqlite, mariadb, openresty)", DEFAULT_CONFIG.driver)) as DatabaseConfig["driver"];
       const defaults = DRIVER_DEFAULTS[driver] || DRIVER_DEFAULTS.postgresql;
 
       const host = await ask("Database host", DEFAULT_CONFIG.host);
