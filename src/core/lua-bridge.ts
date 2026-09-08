@@ -56,9 +56,11 @@ export function validateLuaIdentifier(name: string): void {
 
 export class LuaBridge {
   private luaPath: string;
+  private luaPackagePath: string;
 
-  constructor(luaPath = "lua") {
+  constructor(luaPath = "lua", luaPackagePath?: string) {
     this.luaPath = luaPath;
+    this.luaPackagePath = luaPackagePath || "";
   }
 
   /**
@@ -70,7 +72,8 @@ export class LuaBridge {
     const tmpFile = path.join(os.tmpdir(), `jade_lua_${Date.now()}_${Math.random().toString(36).slice(2)}.lua`);
     try {
       const argsLua = `ARGS = ${toLuaTable(args)}`;
-      const fullCode = argsLua + "\n" + code;
+      const pathSetup = this.luaPackagePath ? `package.path = "${this.luaPackagePath}" .. ";" .. package.path\n` : "";
+      const fullCode = pathSetup + argsLua + "\n" + code;
       fs.writeFileSync(tmpFile, fullCode, "utf-8");
       const { stdout, stderr } = await exec(this.luaPath, [tmpFile]);
       return { stdout: stdout.trim(), stderr: stderr?.trim() ?? "" };
