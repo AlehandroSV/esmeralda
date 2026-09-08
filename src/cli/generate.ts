@@ -104,11 +104,13 @@ local content = f:read("*a")
 f:close()
 local schema = jade.Declarative.parsedeclarativeSchema(content)
 local files = jade.Declarative.toLuaFiles({ models = schema.models })
-local result = {}
+local parts = {}
 for filename, file_content in pairs(files) do
-    table.insert(result, { filename = filename, content = file_content })
+    local esc_fn = filename:gsub('\\\\', '\\\\\\\\'):gsub('"', '\\\\"'):gsub('\\n', '\\\\n'):gsub('\\r', '\\\\r')
+    local esc_fc = file_content:gsub('\\\\', '\\\\\\\\'):gsub('"', '\\\\"'):gsub('\\n', '\\\\n'):gsub('\\r', '\\\\r')
+    table.insert(parts, '{"filename":"' .. esc_fn .. '","content":"' .. esc_fc .. '"}')
 end
-print(require("dkjson").encode(result))
+print('[' .. table.concat(parts, ',') .. ']')
           `;
         } else {
           // Parse schema.lua using dofile
@@ -118,11 +120,13 @@ ${LUA_CONFIG_LOAD}
 jade.configure(_cfg)
 local schema_def = dofile(ARGS.schemaDefPath)
 local files = jade.Declarative.toLuaFiles(schema_def)
-local result = {}
-for filename, content in pairs(files) do
-    table.insert(result, { filename = filename, content = content })
+local parts = {}
+for filename, file_content in pairs(files) do
+    local esc_fn = filename:gsub('\\\\', '\\\\\\\\'):gsub('"', '\\\\"'):gsub('\\n', '\\\\n'):gsub('\\r', '\\\\r')
+    local esc_fc = file_content:gsub('\\\\', '\\\\\\\\'):gsub('"', '\\\\"'):gsub('\\n', '\\\\n'):gsub('\\r', '\\\\r')
+    table.insert(parts, '{"filename":"' .. esc_fn .. '","content":"' .. esc_fc .. '"}')
 end
-print(require("dkjson").encode(result))
+print('[' .. table.concat(parts, ',') .. ']')
           `;
         }
 
@@ -260,7 +264,27 @@ end
 
 ${schemaLoadLua}
 local diff = jade.Declarative.diff(current_schema, schema_def)
-print(require("dkjson").encode(diff))
+-- Write result as simple key-value output (no dkjson dependency)
+local function encodeSimple(v)
+    if type(v) == "string" then return '"' .. v:gsub('\\\\', '\\\\\\\\'):gsub('"', '\\\\"'):gsub('\\n', '\\\\n') .. '"'
+    elseif type(v) == "number" then return tostring(v)
+    elseif type(v) == "boolean" then return tostring(v)
+    elseif type(v) == "nil" then return "null"
+    elseif type(v) == "table" then
+        -- Check if array
+        if #v > 0 or next(v) == nil then
+            local parts = {}
+            for _, item in ipairs(v) do parts[#parts+1] = encodeSimple(item) end
+            return '[' .. table.concat(parts, ',') .. ']'
+        else
+            local parts = {}
+            for k, val in pairs(v) do parts[#parts+1] = '"' .. tostring(k) .. '":' .. encodeSimple(val) end
+            return '{' .. table.concat(parts, ',') .. '}'
+        end
+    end
+    return "null"
+end
+print(encodeSimple(diff))
       `;
 
       const diff = await bridge.executeSafeJson(script, {

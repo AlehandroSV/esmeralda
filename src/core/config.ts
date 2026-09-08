@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { LUA_JSON_ENCODER } from "./lua-bridge.js";
 
 const exec = promisify(execFile);
 
@@ -58,6 +59,7 @@ export async function parseConfigFile(configPath: string): Promise<JadeConfig> {
   const envConfigPath = path.join(dir, `jade.config.${env}.lua`);
 
   const script = `
+${LUA_JSON_ENCODER}
 local ok, config = pcall(dofile, ARGS.configPath)
 if not ok then
   io.stderr:write("Failed to load config: " .. tostring(config) .. "\\n")
@@ -75,8 +77,7 @@ if envOk and type(envConfig) == "table" then
   end
 end
 
-local json = require("dkjson")
-print(json.encode(config))
+print(_json_encode(config))
   `;
 
   try {

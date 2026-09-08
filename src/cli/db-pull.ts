@@ -6,7 +6,7 @@ import { findProjectRoot } from "../core/project.js";
 import { parseSchemaFile } from "../core/schema-parser.js";
 import { saveState } from "../core/schema-state.js";
 import { detectDriver, getDialect, type SQLDialect, type DriverKind } from "../core/sql-dialect.js";
-import { LuaBridge } from "../core/lua-bridge.js";
+import { LuaBridge, LUA_JSON_ENCODER } from "../core/lua-bridge.js";
 
 /* ─── Interfaces ────────────────────────────────────────────── */
 
@@ -72,6 +72,7 @@ export function registerDbPull(db: Command): void {
 
         // Get table list using dialect-specific query
         const listScript = `
+          ${LUA_JSON_ENCODER}
           local jade = require("jade")
           local config = dofile("${configPath}")
           jade.configure(config)
@@ -80,7 +81,7 @@ export function registerDbPull(db: Command): void {
           for _, row in ipairs(tables) do
             ${tableListExtractor(driverKind)}
           end
-          print(require("dkjson").encode(result))
+          print(_json_encode(result))
         `;
 
         const bridge = new LuaBridge();
@@ -156,11 +157,12 @@ async function introspectTable(
   // Get columns
   const columnQuery = dialect.columnListQuery(tableName);
   const columnScript = `
+    ${LUA_JSON_ENCODER}
     local jade = require("jade")
     local config = dofile("${configPath}")
     jade.configure(config)
     local cols = jade.driver():execute([[${columnQuery}]])
-    print(require("dkjson").encode(cols))
+    print(_json_encode(cols))
   `;
   const rawColumns = await bridge.executeSafeJson(columnScript);
   const columns = normalizeColumns(rawColumns, driverKind);
@@ -170,11 +172,12 @@ async function introspectTable(
   try {
     const fkQuery = dialect.foreignKeyQuery(tableName);
     const fkScript = `
+      ${LUA_JSON_ENCODER}
       local jade = require("jade")
       local config = dofile("${configPath}")
       jade.configure(config)
       local fks = jade.driver():execute([[${fkQuery}]])
-      print(require("dkjson").encode(fks))
+      print(_json_encode(fks))
     `;
     foreignKeys = normalizeForeignKeys(await bridge.executeSafeJson(fkScript), driverKind);
   } catch {
@@ -186,11 +189,12 @@ async function introspectTable(
   try {
     const uqQuery = dialect.uniqueConstraintsQuery(tableName);
     const uqScript = `
+      ${LUA_JSON_ENCODER}
       local jade = require("jade")
       local config = dofile("${configPath}")
       jade.configure(config)
       local uqs = jade.driver():execute([[${uqQuery}]])
-      print(require("dkjson").encode(uqs))
+      print(_json_encode(uqs))
     `;
     uniqueConstraints = normalizeUniqueConstraints(await bridge.executeSafeJson(uqScript), driverKind);
   } catch {
