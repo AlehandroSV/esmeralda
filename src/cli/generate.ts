@@ -66,17 +66,20 @@ export function registerGenerate(program: Command): void {
 
         let script: string;
         if (isJade) {
-          // Parse .jade file using Jade's Declarative parser
-          const jadeContent = fs.readFileSync(schemaDefPath, "utf-8").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
+          // Parse .jade file by reading it inside Lua
           script = `
 local jade = require("jade")
 ${LUA_CONFIG_LOAD}
 jade.configure(_cfg)
-local schema = jade.Declarative.parsedeclarativeSchema("${jadeContent}")
+local f = io.open(ARGS.schemaDefPath, "r")
+if not f then error("Cannot open file: " .. ARGS.schemaDefPath) end
+local content = f:read("*a")
+f:close()
+local schema = jade.Declarative.parsedeclarativeSchema(content)
 local files = jade.Declarative.toLuaFiles({ models = schema.models })
 local result = {}
-for filename, content in pairs(files) do
-    table.insert(result, { filename = filename, content = content })
+for filename, file_content in pairs(files) do
+    table.insert(result, { filename = filename, content = file_content })
 end
 print(require("dkjson").encode(result))
           `;
@@ -189,8 +192,7 @@ function schemaDiffAction(options: SchemaDiffOptions): void {
 
       let schemaLoadLua: string;
       if (isJade) {
-        const jadeContent = fs.readFileSync(schemaPath, "utf-8").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
-        schemaLoadLua = `local parsed = jade.Declarative.parsedeclarativeSchema("${jadeContent}")\nlocal schema_def = { models = parsed.models }`;
+        schemaLoadLua = `local f = io.open(ARGS.schemaPath, "r")\nif not f then error("Cannot open: " .. ARGS.schemaPath) end\nlocal content = f:read("*a")\nf:close()\nlocal parsed = jade.Declarative.parsedeclarativeSchema(content)\nlocal schema_def = { models = parsed.models }`;
       } else {
         schemaLoadLua = `local schema_def = dofile(ARGS.schemaPath)`;
       }
