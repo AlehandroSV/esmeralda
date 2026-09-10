@@ -462,7 +462,7 @@ function promptYesNo(question: string): Promise<boolean> {
 export function registerDbSync(db: Command): void {
   db
     .command("sync")
-    .description("Automatically sync database schema to match local definition (like prisma db push)")
+    .description("Automatically sync database schema to match the local .jade definition")
     .option("--preview", "Show what would be done without applying")
     .option("--force", "Skip confirmation prompt and apply immediately")
     .action(async (options: SyncOptions) => {
