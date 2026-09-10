@@ -16,66 +16,61 @@ function hasDockerCompose(projectRoot: string): boolean {
 }
 
 
-export function registerMigrate(program: Command): Command {
-  const migrate = program
-    .command("migrate")
-    .description("Run pending migrations")
-    .option("-d, --database <name>", "Database to migrate (for multi-database)")
-    .option("--preview", "Show SQL without executing")
-    .action(async (options: MigrateOptions) => {
-      try {
-        const projectRoot = findProjectRoot();
-        if (!projectRoot) {
-          throw AppError.notInitialized();
-        }
+async function runPendingMigrations(options: MigrateOptions): Promise<void> {
+  try {
+    const projectRoot = findProjectRoot();
+    if (!projectRoot) {
+      throw AppError.notInitialized();
+    }
 
-        let migrationsDir: string;
-        if (options.database) {
-          const { getDatabaseConfig } = await import("../core/multi-db.js");
-          const dbConfig = getDatabaseConfig(projectRoot, options.database);
-          if (!dbConfig) {
-            throw new Error(`Database "${options.database}" not found in config.`);
-          }
-          migrationsDir = dbConfig.migrationsDir;
-        } else {
-          migrationsDir = path.join(projectRoot, "migrations");
-        }
+    let migrationsDir: string;
+    if (options.database) {
+      const { getDatabaseConfig } = await import("../core/multi-db.js");
+      const dbConfig = getDatabaseConfig(projectRoot, options.database);
+      if (!dbConfig) {
+        throw new Error(`Database "${options.database}" not found in config.`);
+      }
+      migrationsDir = dbConfig.migrationsDir;
+    } else {
+      migrationsDir = path.join(projectRoot, "migrations");
+    }
 
-        if (!fs.existsSync(migrationsDir)) {
-          throw AppError.migrationsDirNotFound();
-        }
+    if (!fs.existsSync(migrationsDir)) {
+      throw AppError.migrationsDirNotFound();
+    }
 
-        const files = fs.readdirSync(migrationsDir)
-          .filter(f => f.endsWith(".lua") && !f.startsWith("_"))
-          .sort();
+    const files = fs.readdirSync(migrationsDir)
+      .filter(f => f.endsWith(".lua") && !f.startsWith("_"))
+      .sort();
 
-        if (files.length === 0) {
-          Logger.warn("No migrations found.");
-          return;
-        }
+    if (files.length === 0) {
+      Logger.warn("No migrations found.");
+      Logger.info("Run `esmeralda generate` to create migrations from schema/models.jade");
+      return;
+    }
 
-        const useDocker = hasDockerCompose(projectRoot);
-        if (useDocker) {
-          Logger.info("Using Docker to run migrations");
-        }
+    const useDocker = hasDockerCompose(projectRoot);
+    if (useDocker) {
+      Logger.info("Using Docker to run migrations");
+    }
 
-        Logger.info(`Found ${files.length} migration(s)`);
+    Logger.info(`Found ${files.length} migration(s)`);
 
-        if (options.preview) {
-          Logger.info("Pending migrations:");
-          for (const file of files) {
-            Logger.info(`  - ${file}`);
-          }
-          return;
-        }
+    if (options.preview) {
+      Logger.info("Pending migrations:");
+      for (const file of files) {
+        Logger.info(`  - ${file}`);
+      }
+      return;
+    }
 
-        Logger.info("Running migrations via Jade...");
+    Logger.info("Running migrations via Jade...");
 
-        const configPath = path.join(projectRoot, "jade.config.lua");
-        const bridge = new LuaBridge();
+    const configPath = path.join(projectRoot, "jade.config.lua");
+    const bridge = new LuaBridge();
 
-        // Use Jade's migration.migrate() which handles atomicity and tracking
-        const script = `
+    // Use Jade's migration.migrate() which handles atomicity and tracking
+    const script = `
 local jade = require("jade")
 local config = dofile(ARGS.configPath)
 jade.configure(config)
@@ -133,28 +128,48 @@ end
 print("Applied " .. success_count .. " migration(s)")
         `;
 
-        if (useDocker) {
-          await bridge.executeSafeDocker(script, { configPath, migrationsPath: migrationsDir }, projectRoot);
-        } else {
-          await bridge.executeSafe(script, { configPath, migrationsPath: migrationsDir });
-        }
+    if (useDocker) {
+      await bridge.executeSafeDocker(script, { configPath, migrationsPath: migrationsDir }, projectRoot);
+    } else {
+      await bridge.executeSafe(script, { configPath, migrationsPath: migrationsDir });
+    }
 
-        Logger.success("All migrations applied!");
-      } catch (error: any) {
-        if (error instanceof AppError) {
-          Logger.error(error.message);
-          if (error.suggestion) {
-            Logger.info(`Suggestion: ${error.suggestion}`);
-          }
-        } else {
-          Logger.error("Migration failed:");
-          Logger.error(error.message);
-        }
-        if (process.env.DEBUG) {
-          console.error(error.stack);
-        }
-        process.exit(1);
+    Logger.success("All migrations applied!");
+  } catch (error: any) {
+    if (error instanceof AppError) {
+      Logger.error(error.message);
+      if (error.suggestion) {
+        Logger.info(`Suggestion: ${error.suggestion}`);
       }
+    } else {
+      Logger.error("Migration failed:");
+      Logger.error(error.message);
+    }
+    if (process.env.DEBUG) {
+      console.error(error.stack);
+    }
+    process.exit(1);
+  }
+}
+
+export function registerMigrate(program: Command): Command {
+  const migrate = program
+    .command("migrate")
+    .description("Run pending migrations (dev). Prefer `esmeralda migrate dev` in scripts.")
+    .option("-d, --database <name>", "Database to migrate (for multi-database)")
+    .option("--preview", "Show SQL without executing")
+    .action(async (options: MigrateOptions) => {
+      await runPendingMigrations(options);
+    });
+
+  // Explicit development entrypoint (Prisma-like surface)
+  migrate
+    .command("dev")
+    .description("Apply pending migrations to the development database")
+    .option("-d, --database <name>", "Database to migrate (for multi-database)")
+    .option("--preview", "Show pending migrations without executing")
+    .action(async (options: MigrateOptions) => {
+      await runPendingMigrations(options);
     });
 
   // Status command

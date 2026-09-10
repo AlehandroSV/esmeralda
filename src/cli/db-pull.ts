@@ -123,7 +123,7 @@ export function registerDbPull(db: Command): void {
 
         if (entities.length > 0) {
           saveState(projectRoot, entities);
-          Logger.info(`  Saved schema state (.esmeralda-state.json) with ${entities.length} entities`);
+          Logger.info(`  Saved schema state (esmeralda-state.json) with ${entities.length} entities`);
         }
 
         Logger.success("Entity files generated in schema/");
