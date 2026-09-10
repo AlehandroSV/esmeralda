@@ -19,4 +19,9 @@ describe("generateBarrel", () => {
     expect(barrel).toContain("AVAILABLE = {  }");
     expect(barrel).toContain("return setmetatable");
   });
+
+  it("supports multi-db require path", () => {
+    const barrel = generateBarrel(["Event"], "jade.generated.analytics");
+    expect(barrel).toContain('require("jade.generated.analytics")');
+  });
 });

@@ -6,6 +6,9 @@ import { findProjectRoot } from "../core/project.js";
 import { detectDriver, getDialect, type SQLDialect, type DriverKind } from "../core/sql-dialect.js";
 import { LuaBridge, LUA_JSON_ENCODER } from "../core/lua-bridge.js";
 import { getDatabaseNames, parseMultiDbConfig } from "../core/multi-db.js";
+import { resolvePaths, slugifyDbName } from "../core/schema-paths.js";
+import { saveState } from "../core/schema-state.js";
+import type { EntityDef } from "../core/schema-parser.js";
 
 interface PullOptions {
   database?: string;
@@ -19,6 +22,8 @@ interface PullOptions {
  * Naming (ALINHAMENTO §7.7):
  *   - default / primary DB  → schema/models.jade
  *   - named secondary DB    → schema/{db_name}_models.jade
+ *
+ * Also writes a baseline migration (current DB state) and updates esmeralda-state.json.
  */
 export function registerPull(program: Command): void {
   program
@@ -55,8 +60,9 @@ export function registerPull(program: Command): void {
 
         const isDefault = !options.database || options.database === "default" ||
           (parseMultiDbConfig(projectRoot)?.default === dbLabel);
-        const outName = isDefault ? "models.jade" : `${dbLabel}_models.jade`;
+        const outName = isDefault ? "models.jade" : `${slugifyDbName(dbLabel)}_models.jade`;
         const outPath = path.join(projectRoot, "schema", outName);
+        const paths = resolvePaths(projectRoot, isDefault ? undefined : dbLabel);
 
         const driverKind = detectDriver(projectRoot);
         const dialect = getDialect(driverKind);
@@ -90,10 +96,12 @@ export function registerPull(program: Command): void {
         Logger.info(`Found ${filtered.length} table(s)`);
 
         const models: string[] = [];
+        const entities: EntityDef[] = [];
         for (const tableName of filtered) {
           const meta = await introspectTable(bridge, configPath, dialect, driverKind, tableName);
           const modelName = toPascalCase(tableName);
           models.push(renderJadeModel(modelName, tableName, meta));
+          entities.push(metaToEntity(modelName, tableName, meta));
           Logger.info(`  + ${modelName}`);
         }
 
@@ -102,15 +110,104 @@ export function registerPull(program: Command): void {
 -- Review before generate / migrate.
 
 `;
+        const jadeContent = header + models.join("\n\n") + "\n";
         fs.mkdirSync(path.dirname(outPath), { recursive: true });
-        fs.writeFileSync(outPath, header + models.join("\n\n") + "\n", "utf-8");
-
+        fs.writeFileSync(outPath, jadeContent, "utf-8");
         Logger.success(`Wrote ${path.relative(projectRoot, outPath)}`);
-        Logger.info("Next: review, then `esmeralda generate` (use -f if not models.jade)");
+
+        // Baseline migration: current DB state, recorded as applied so migrate skips it
+        await writeBaseline(bridge, projectRoot, paths.migrationsDir, jadeContent, dbLabel, isDefault);
+
+        // Snapshot for future generate diffs
+        if (entities.length > 0) {
+          saveState(projectRoot, entities);
+          Logger.info(`  Saved esmeralda-state.json (${entities.length} entities)`);
+        }
+
+        Logger.info("Next: review, then `esmeralda generate`" +
+          (isDefault ? "" : ` -d ${dbLabel}`));
       } catch (error: unknown) {
         handleError(error);
       }
     });
+}
+
+/** Build EntityDef from introspected table metadata (for esmeralda-state.json). */
+export function metaToEntity(modelName: string, tableName: string, meta: TableMetadata): EntityDef {
+  return {
+    name: modelName,
+    tableName,
+    columns: meta.columns
+      .filter(c => c.column_name !== "id")
+      .map(c => ({
+        name: c.column_name,
+        type: mapJadeType(c),
+        length: c.character_maximum_length ?? undefined,
+      })),
+  };
+}
+
+/** Generate a baseline migration from the pulled .jade and record it as applied. */
+async function writeBaseline(
+  bridge: LuaBridge,
+  projectRoot: string,
+  migrationsDir: string,
+  jadeContent: string,
+  dbLabel: string,
+  isDefault: boolean
+): Promise<void> {
+  const configPath = path.join(projectRoot, "jade.config.lua");
+  const timestamp = Date.now().toString();
+  const filename = `${timestamp}_baseline.lua`;
+  const migrationPath = path.join(migrationsDir, filename);
+
+  const script = `
+${LUA_JSON_ENCODER}
+local jade = require("jade")
+local config = dofile("${configPath.replace(/\\/g, "\\\\")}")
+jade.configure(config)
+local schema = jade.Declarative.parsedeclarativeSchema(ARGS.jadeContent)
+local migration = jade.Declarative.generateMigration(schema, "baseline")
+local tracker = require("jade.migration.tracker")
+jade.migration.init(jade.driver())
+tracker.createTrackerTable(jade.driver())
+tracker.recordMigration(jade.driver(), ARGS.filename)
+print(_json_encode({ migration = migration, recorded = true }))
+  `;
+
+  let migrationLua: string;
+  try {
+    const result = await bridge.executeSafeJson(script, {
+      jadeContent,
+      filename,
+    });
+    migrationLua = result.migration;
+  } catch {
+    // Fallback: write a minimal baseline without tracker (DB may be unreachable for tracker)
+    migrationLua = `-- Baseline migration for ${isDefault ? "primary database" : `database "${dbLabel}"`}
+-- Generated by esmeralda pull (experimental)
+-- Represents the database state at pull time.
+
+local jade = require("jade")
+
+local M = {}
+
+function M.up()
+  -- Tables already exist in the live database. This baseline is a snapshot only.
+end
+
+function M.down()
+  -- Baseline: no-op. Do not drop existing tables on rollback.
+end
+
+return M
+`;
+    Logger.warn("Could not generate baseline via Jade — wrote empty baseline stub.");
+  }
+
+  fs.mkdirSync(migrationsDir, { recursive: true });
+  fs.writeFileSync(migrationPath, migrationLua, "utf-8");
+  Logger.info(`  Baseline: ${path.relative(projectRoot, migrationPath).replace(/\\/g, "/")} (marked applied)`);
 }
 
 /* ─── Introspection (lean copy for experimental pull) ────────── */

@@ -55,9 +55,10 @@ Generates model files + lazy barrel + migration from the `.jade` schema.
 esmeralda generate -n create_users
 esmeralda generate --preview  # Preview SQL only
 esmeralda generate --run      # Generate and apply migration
+esmeralda generate -d analytics  # multi-db → schema/analytics_models.jade
 ```
 
-Output:
+Output (primary):
 ```
 jade/generated/
 ├── User.lua
@@ -67,9 +68,16 @@ migrations/
 └── <timestamp>_<name>.lua
 ```
 
+Output (multi-db `-d analytics`):
+```
+jade/generated/analytics/   # require("jade.generated.analytics")
+migrations/analytics/
+```
+
 Lua usage:
 ```lua
-local Models = require("jade.generated")
+local Models = require("jade.generated")           -- primary
+local Analytics = require("jade.generated.analytics")  -- secondary
 local User = Models.User
 ```
 
@@ -129,6 +137,10 @@ esmeralda pull -d analytics    # multi-db → schema/analytics_models.jade
 esmeralda pull -t users        # single table
 esmeralda pull -i              # prompt for database when multi-db is configured
 ```
+
+Also writes:
+- a **baseline** migration (`migrations/<ts>_baseline.lua`) representing the current DB state — recorded as applied so `migrate` skips it
+- an updated `esmeralda-state.json` snapshot for future generate diffs
 
 #### dev
 
@@ -278,9 +290,10 @@ Gera models + barrel lazy + migration a partir do schema `.jade`.
 esmeralda generate -n create_users
 esmeralda generate --preview  # Apenas mostra o SQL
 esmeralda generate --run      # Gera e aplica a migration
+esmeralda generate -d analytics  # multi-db → schema/analytics_models.jade
 ```
 
-Saida:
+Saida (primario):
 ```
 jade/generated/
 ├── User.lua
@@ -290,9 +303,16 @@ migrations/
 └── <timestamp>_<nome>.lua
 ```
 
+Saida (multi-db `-d analytics`):
+```
+jade/generated/analytics/   # require("jade.generated.analytics")
+migrations/analytics/
+```
+
 Uso no Lua:
 ```lua
-local Models = require("jade.generated")
+local Models = require("jade.generated")           -- primario
+local Analytics = require("jade.generated.analytics")  -- secundario
 local User = Models.User
 ```
 
@@ -352,6 +372,10 @@ esmeralda pull -d analytics    # multi-db → schema/analytics_models.jade
 esmeralda pull -t users        # tabela unica
 esmeralda pull -i              # pergunta o database se multi-db estiver configurado
 ```
+
+Tambem grava:
+- uma migration **baseline** (`migrations/<ts>_baseline.lua`) com o estado atual do banco — registrada como aplicada para o `migrate` pular
+- um snapshot atualizado de `esmeralda-state.json` para diffs futuros do generate
 
 #### dev
 
