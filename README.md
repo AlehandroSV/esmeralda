@@ -26,6 +26,7 @@ npm install -g @alehandrosv/esmeralda-cli
 #### init
 
 Creates the basic structure of a Jade project. Supports interactive mode and `--yes` flag.
+Also reports environment versions (Lua, Jade, Esmeralda).
 
 ```bash
 esmeralda init -n my-app          # Non-interactive
@@ -41,25 +42,44 @@ my-app/
 │   └── init.lua
 ├── migrations/
 ├── seeds/
+├── esmeralda-state.json   # schema snapshot (commitable)
 └── lib/
     └── app.lua
 ```
 
 #### generate
 
-Generates a migration from schema changes.
+Generates model files + lazy barrel + migration from the `.jade` schema.
 
 ```bash
 esmeralda generate -n create_users
 esmeralda generate --preview  # Preview SQL only
+esmeralda generate --run      # Generate and apply migration
+```
+
+Output:
+```
+jade/generated/
+├── User.lua
+├── Post.lua
+└── init.lua           # lazy barrel
+migrations/
+└── <timestamp>_<name>.lua
+```
+
+Lua usage:
+```lua
+local Models = require("jade.generated")
+local User = Models.User
 ```
 
 #### migrate
 
-Runs all pending migrations.
+Runs all pending migrations. Prefer `migrate dev` in day-to-day development.
 
 ```bash
 esmeralda migrate
+esmeralda migrate dev          # same (explicit dev entrypoint)
 esmeralda migrate --preview  # Preview only
 ```
 
@@ -209,6 +229,7 @@ npm install -g @alehandrosv/esmeralda-cli
 #### init
 
 Cria a estrutura basica de um projeto Jade. Suporta modo interativo e flag `--yes`.
+Tambem reporta versoes do ambiente (Lua, Jade, Esmeralda).
 
 ```bash
 esmeralda init -n my-app          # Nao-interativo
@@ -224,25 +245,44 @@ my-app/
 │   └── init.lua
 ├── migrations/
 ├── seeds/
+├── esmeralda-state.json   # snapshot do schema (commitavel)
 └── lib/
     └── app.lua
 ```
 
 #### generate
 
-Gera uma migration a partir das alteracoes no schema.
+Gera models + barrel lazy + migration a partir do schema `.jade`.
 
 ```bash
 esmeralda generate -n create_users
 esmeralda generate --preview  # Apenas mostra o SQL
+esmeralda generate --run      # Gera e aplica a migration
+```
+
+Saida:
+```
+jade/generated/
+├── User.lua
+├── Post.lua
+└── init.lua           # barrel lazy
+migrations/
+└── <timestamp>_<nome>.lua
+```
+
+Uso no Lua:
+```lua
+local Models = require("jade.generated")
+local User = Models.User
 ```
 
 #### migrate
 
-Roda todas as migrations pendentes.
+Roda todas as migrations pendentes. Prefira `migrate dev` no dia a dia.
 
 ```bash
 esmeralda migrate
+esmeralda migrate dev          # ponto de entrada explicito de dev
 esmeralda migrate --preview  # Apenas mostra o que seria executado
 ```
 

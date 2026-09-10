@@ -3,7 +3,8 @@ import * as path from "path";
 import { EntityDef } from "./schema-parser.js";
 import type { IndexDef } from "./diff-engine.js";
 
-const STATE_FILE = ".esmeralda-state.json";
+const STATE_FILE = "esmeralda-state.json";
+const LEGACY_STATE_FILE = ".esmeralda-state.json";
 
 export interface SchemaStateEntity {
   name: string;
@@ -25,16 +26,33 @@ function isValidState(data: any): data is SchemaState {
     Array.isArray(data.entities);
 }
 
-export function loadState(projectRoot: string): SchemaState | null {
-  const filePath = path.join(projectRoot, STATE_FILE);
+function readStateFile(filePath: string): SchemaState | null {
   if (!fs.existsSync(filePath)) return null;
-
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
     return isValidState(parsed) ? parsed : null;
   } catch {
     return null;
   }
+}
+
+export function loadState(projectRoot: string): SchemaState | null {
+  const primary = readStateFile(path.join(projectRoot, STATE_FILE));
+  if (primary) return primary;
+
+  // Migrate legacy dotted filename if present
+  const legacyPath = path.join(projectRoot, LEGACY_STATE_FILE);
+  const legacy = readStateFile(legacyPath);
+  if (legacy) {
+    fs.writeFileSync(
+      path.join(projectRoot, STATE_FILE),
+      JSON.stringify(legacy, null, 2) + "\n",
+      "utf-8"
+    );
+    fs.unlinkSync(legacyPath);
+    return legacy;
+  }
+  return null;
 }
 
 export function saveState(projectRoot: string, entities: EntityDef[]): void {
@@ -55,6 +73,10 @@ export function saveState(projectRoot: string, entities: EntityDef[]): void {
 
   const filePath = path.join(projectRoot, STATE_FILE);
   fs.writeFileSync(filePath, JSON.stringify(state, null, 2) + "\n", "utf-8");
+}
+
+export function getStateFileName(): string {
+  return STATE_FILE;
 }
 
 export function createEmptyState(): SchemaState {

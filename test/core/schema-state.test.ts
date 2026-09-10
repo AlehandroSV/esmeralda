@@ -30,7 +30,7 @@ describe("Schema State", () => {
     });
 
     it("returns null for invalid JSON", () => {
-      fs.writeFileSync(path.join(tmpDir, ".esmeralda-state.json"), "not json");
+      fs.writeFileSync(path.join(tmpDir, "esmeralda-state.json"), "not json");
       expect(loadState(tmpDir)).toBeNull();
     });
 
@@ -40,7 +40,7 @@ describe("Schema State", () => {
         updated_at: "2026-01-01T00:00:00Z",
         entities: [{ name: "User", tableName: "users", columns: [] }],
       };
-      fs.writeFileSync(path.join(tmpDir, ".esmeralda-state.json"), JSON.stringify(state));
+      fs.writeFileSync(path.join(tmpDir, "esmeralda-state.json"), JSON.stringify(state));
 
       const loaded = loadState(tmpDir);
       expect(loaded).not.toBeNull();
@@ -49,12 +49,12 @@ describe("Schema State", () => {
     });
 
     it("returns null for valid JSON with wrong shape", () => {
-      fs.writeFileSync(path.join(tmpDir, ".esmeralda-state.json"), '{"foo":"bar"}');
+      fs.writeFileSync(path.join(tmpDir, "esmeralda-state.json"), '{"foo":"bar"}');
       expect(loadState(tmpDir)).toBeNull();
     });
 
     it("returns null for empty object (missing entities array)", () => {
-      fs.writeFileSync(path.join(tmpDir, ".esmeralda-state.json"), '{"version":"1.0.0"}');
+      fs.writeFileSync(path.join(tmpDir, "esmeralda-state.json"), '{"version":"1.0.0"}');
       expect(loadState(tmpDir)).toBeNull();
     });
   });
@@ -67,7 +67,7 @@ describe("Schema State", () => {
 
       saveState(tmpDir, entities);
 
-      const content = JSON.parse(fs.readFileSync(path.join(tmpDir, ".esmeralda-state.json"), "utf-8"));
+      const content = JSON.parse(fs.readFileSync(path.join(tmpDir, "esmeralda-state.json"), "utf-8"));
       expect(content.version).toBe("1.0.0");
       expect(content.entities).toHaveLength(1);
       expect(content.entities[0].tableName).toBe("users");

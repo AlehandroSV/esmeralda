@@ -6,6 +6,7 @@ import { Logger, AppError, handleError } from "../utils/logger.js";
 import { ensureDir, writeFile, fileExists } from "../core/file-manager.js";
 import { createEmptyState } from "../core/schema-state.js";
 import { escapeLuaString } from "../core/lua-bridge.js";
+import { reportEnvironment } from "../core/versions.js";
 
 interface InitOptions {
   name?: string;
@@ -184,7 +185,7 @@ MIT
     // --- .gitignore ---
     {
       path: ".gitignore",
-      content: `.esmeralda-state.json\nnode_modules/\n.env\n*.log\n.DS_Store\ndist/\n`,
+      content: `node_modules/\n.env\n*.log\n.DS_Store\ndist/\n`,
     },
   ],
 });
@@ -286,7 +287,7 @@ MIT
     // --- .gitignore ---
     {
       path: ".gitignore",
-      content: `.esmeralda-state.json\nnode_modules/\n.env\n*.log\n.DS_Store\ndist/\n`,
+      content: `node_modules/\n.env\n*.log\n.DS_Store\ndist/\n`,
     },
   ],
 });
@@ -380,7 +381,7 @@ MIT
     // --- .gitignore ---
     {
       path: ".gitignore",
-      content: `.esmeralda-state.json\nnode_modules/\n*.log\n.DS_Store\ndist/\n*.db\n`,
+      content: `node_modules/\n*.log\n.DS_Store\ndist/\n*.db\n`,
     },
   ],
 });
@@ -625,7 +626,7 @@ MIT
     // --- .gitignore ---
     {
       path: ".gitignore",
-      content: `.esmeralda-state.json\nnode_modules/\n.env\n*.log\n.DS_Store\ndist/\n`,
+      content: `node_modules/\n.env\n*.log\n.DS_Store\ndist/\n`,
     },
   ],
 });
@@ -774,11 +775,11 @@ function scaffoldStandardDirs(targetPath: string): void {
     Logger.info("  Created schema/init.lua");
   }
 
-  // Create .esmeralda-state.json only if it doesn't exist
-  const statePath = path.join(targetPath, ".esmeralda-state.json");
+  // Create esmeralda-state.json only if it doesn't exist
+  const statePath = path.join(targetPath, "esmeralda-state.json");
   if (!fileExists(statePath)) {
     writeFile(statePath, JSON.stringify(createEmptyState(), null, 2) + "\n");
-    Logger.info("  Created .esmeralda-state.json");
+    Logger.info("  Created esmeralda-state.json");
   }
 }
 
@@ -988,11 +989,11 @@ return {}
     Logger.info("  schema/init.lua already exists, skipping");
   }
 
-  // Create .esmeralda-state.json if it doesn't exist
-  const statePath = path.join(targetPath, ".esmeralda-state.json");
+  // Create esmeralda-state.json if it doesn't exist
+  const statePath = path.join(targetPath, "esmeralda-state.json");
   if (!fileExists(statePath)) {
     writeFile(statePath, JSON.stringify(createEmptyState(), null, 2) + "\n");
-    Logger.info("  Created .esmeralda-state.json");
+    Logger.info("  Created esmeralda-state.json");
   }
 }
 
@@ -1007,6 +1008,8 @@ export function registerInit(program: Command): void {
     .option("-t, --template <name>", "Use a pre-built project template (api-rest, microservice, cli-app, blog)")
     .action(async (options: InitOptions) => {
       try {
+        reportEnvironment(process.cwd());
+
         /* ─── Mode: --template ──────────────────────────────────── */
         if (options.template) {
           const templateId = options.template;
