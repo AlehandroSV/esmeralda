@@ -3,7 +3,7 @@ import * as path from "path";
 import * as fs from "fs";
 import { Logger, AppError, handleError } from "../utils/logger.js";
 import { findProjectRoot } from "../core/project.js";
-import { LuaBridge } from "../core/lua-bridge.js";
+import { LuaBridge, LUA_JSON_ENCODER } from "../core/lua-bridge.js";
 import { getConfigPathForEnv, LUA_CONFIG_LOAD } from "../core/config.js";
 import { parseSchemaFile } from "../core/schema-parser.js";
 
@@ -39,9 +39,10 @@ export function registerGenerate(program: Command): void {
     .description("Generate migration from .jade schema (standard)")
     .option("-n, --name <name>", "Migration name")
     .option("--preview", "Preview SQL without generating file")
+    .option("--run", "Generate and immediately run the migration")
     .option("-o, --output <dir>", "Output directory (default: schema/)")
     .option("-f, --file <path>", "Schema file path (default: auto-detect)")
-    .action(async (options: SchemaGenerateOptions & { file?: string; preview?: boolean }) => {
+    .action(async (options: SchemaGenerateOptions & { file?: string; preview?: boolean; run?: boolean }) => {
       try {
         const projectRoot = findProjectRoot();
         if (!projectRoot) {
@@ -93,8 +94,9 @@ export function registerGenerate(program: Command): void {
 
         let script: string;
         if (isJade) {
-          // Parse .jade file by reading it inside Lua
+          // Parse .jade file and generate full models + migration
           script = `
+${LUA_JSON_ENCODER}
 local jade = require("jade")
 ${LUA_CONFIG_LOAD}
 jade.configure(_cfg)
@@ -103,14 +105,20 @@ if not f then error("Cannot open file: " .. ARGS.schemaDefPath) end
 local content = f:read("*a")
 f:close()
 local schema = jade.Declarative.parsedeclarativeSchema(content)
-local files = jade.Declarative.toLuaFiles({ models = schema.models })
-local parts = {}
-for filename, file_content in pairs(files) do
-    local esc_fn = filename:gsub('\\\\', '\\\\\\\\'):gsub('"', '\\\\"'):gsub('\\n', '\\\\n'):gsub('\\r', '\\\\r')
-    local esc_fc = file_content:gsub('\\\\', '\\\\\\\\'):gsub('"', '\\\\"'):gsub('\\n', '\\\\n'):gsub('\\r', '\\\\r')
-    table.insert(parts, '{"filename":"' .. esc_fn .. '","content":"' .. esc_fc .. '"}')
+
+-- Generate full model files
+local model_files = jade.Declarative.generateAllModels(schema)
+
+-- Generate migration
+local migration = jade.Declarative.generateMigration(schema, ARGS.migrationName or "create_tables")
+
+-- Build result: models + migration
+local result = { models = {}, migration = migration }
+for filename, file_content in pairs(model_files) do
+    table.insert(result.models, { filename = filename, content = file_content })
 end
-print('[' .. table.concat(parts, ',') .. ']')
+
+print(_json_encode(result))
           `;
         } else {
           // Parse schema.lua using dofile
@@ -130,22 +138,55 @@ print('[' .. table.concat(parts, ',') .. ']')
           `;
         }
 
-        const files: Array<{ filename: string; content: string }> = await bridge.executeSafeJson(script, {
+        const migrationName = options.name || "create_tables";
+        const result: { models: Array<{ filename: string; content: string }>; migration: string } = await bridge.executeSafeJson(script, {
           configPath,
           envConfigPath,
           schemaDefPath,
+          migrationName,
         });
 
-        const outputPath = path.join(projectRoot, outputDir);
-        fs.mkdirSync(outputPath, { recursive: true });
+        // Write model files to jade/generated/
+        const modelsDir = path.join(projectRoot, "jade", "generated");
+        fs.mkdirSync(modelsDir, { recursive: true });
 
-        for (const file of files) {
-          const filePath = path.join(outputPath, file.filename);
+        for (const file of result.models) {
+          const filePath = path.join(modelsDir, file.filename);
           fs.writeFileSync(filePath, file.content, "utf-8");
-          Logger.info(`  Generated: ${file.filename}`);
+          Logger.info(`  Generated: jade/generated/${file.filename}`);
         }
 
-        Logger.success(`Schema files generated in ${outputDir}/`);
+        // Write migration file
+        const timestamp = Date.now().toString();
+        const migrationDir = path.join(projectRoot, "migrations");
+        fs.mkdirSync(migrationDir, { recursive: true });
+        const migrationFilename = `${timestamp}_${migrationName}.lua`;
+        const migrationFile = path.join(migrationDir, migrationFilename);
+        fs.writeFileSync(migrationFile, result.migration, "utf-8");
+        Logger.info(`  Generated: migrations/${migrationFilename}`);
+
+        Logger.success(`Generated ${result.models.length} model(s) + migration`);
+
+        // Run migration immediately if --run flag
+        if (options.run) {
+          Logger.info("Running migration...");
+          const runScript = `
+${LUA_JSON_ENCODER}
+local jade = require("jade")
+${LUA_CONFIG_LOAD}
+jade.configure(_cfg)
+jade.migration.init(jade.driver())
+local migration = dofile(ARGS.migrationPath)
+migration.up()
+print("OK")
+          `;
+          await bridge.executeSafe(runScript, {
+            configPath,
+            envConfigPath,
+            migrationPath: migrationFile.replace(/\\/g, "/"),
+          });
+          Logger.success("Migration applied");
+        }
       } catch (error: unknown) {
         handleError(error);
       }

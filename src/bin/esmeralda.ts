@@ -13,6 +13,7 @@ import { registerDbPush } from "../cli/db-push.js";
 import { registerDbSync } from "../cli/db-sync.js";
 import { registerSeed } from "../cli/seed.js";
 import { registerSeedCreate } from "../cli/db-seed-create.js";
+import { registerDev } from "../cli/dev.js";
 
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf-8"));
 
@@ -27,6 +28,7 @@ program
 registerInit(program);
 registerGenerate(program);
 registerGenerateLegacy(program);
+registerDev(program);
 const migrate = registerMigrate(program);
 registerMigrateCreate(migrate);
 registerMigrateRollback(migrate);
