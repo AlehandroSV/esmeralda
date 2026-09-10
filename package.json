@@ -37,12 +37,11 @@
   "author": "AlehandroSV",
   "repository": {
     "type": "git",
-    "url": "https://github.com/AlehandroSV/esmeralda.git",
-    "directory": "esmeralda"
+    "url": "https://github.com/Jade-ORM/esmeralda-cli.git"
   },
-  "homepage": "https://github.com/AlehandroSV/jade",
+  "homepage": "https://github.com/Jade-ORM/esmeralda-cli#readme",
   "bugs": {
-    "url": "https://github.com/AlehandroSV/esmeralda/issues"
+    "url": "https://github.com/Jade-ORM/esmeralda-cli/issues"
   },
   "license": "MIT",
   "dependencies": {
