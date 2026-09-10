@@ -2,7 +2,7 @@
 
 # Release script for Esmeralda CLI
 # Usage: ./scripts/release.sh <version>
-# Example: ./scripts/release.sh 0.1.1
+# Example: ./scripts/release.sh 2.0.0
 
 set -e
 
@@ -10,7 +10,7 @@ VERSION=$1
 
 if [ -z "$VERSION" ]; then
     echo "Usage: ./scripts/release.sh <version>"
-    echo "Example: ./scripts/release.sh 0.1.1"
+    echo "Example: ./scripts/release.sh 2.0.0"
     exit 1
 fi
 

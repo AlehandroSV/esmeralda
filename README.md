@@ -127,6 +127,17 @@ Introspects a live database and writes a declarative `.jade` schema.
 esmeralda pull                 # primary → schema/models.jade
 esmeralda pull -d analytics    # multi-db → schema/analytics_models.jade
 esmeralda pull -t users        # single table
+esmeralda pull -i              # prompt for database when multi-db is configured
+```
+
+#### dev
+
+Watches `.jade` schema files and regenerates models on change.
+
+```bash
+esmeralda dev              # Watch schema/*.jade, auto-regenerate
+esmeralda dev --run        # Also auto-apply pending migrations
+esmeralda dev -f path.jade # Watch a specific file
 ```
 
 #### db pull
@@ -174,15 +185,14 @@ esmeralda db seed                   # All seeds
 esmeralda db seed user              # Specific seed
 ```
 
-#### schema-generate
+#### generate:legacy (deprecated)
 
-Generates Lua entity files from declarative schema definitions.
+Legacy path for Lua schema files. Prefer `esmeralda generate` with `.jade`.
 
 ```bash
-esmeralda schema-generate
+esmeralda generate:legacy
 ```
 
-Reads declarative schema files and outputs `Jade.Entity()` Lua format.
 
 ### Error Handling
 
@@ -332,6 +342,27 @@ esmeralda migrate rollback              # Desfaz ultima
 esmeralda migrate rollback --steps 3    # Desfaz ultimas 3
 ```
 
+#### pull (experimental)
+
+Introspeciona um banco ao vivo e escreve um schema declarativo `.jade`.
+
+```bash
+esmeralda pull                 # primario → schema/models.jade
+esmeralda pull -d analytics    # multi-db → schema/analytics_models.jade
+esmeralda pull -t users        # tabela unica
+esmeralda pull -i              # pergunta o database se multi-db estiver configurado
+```
+
+#### dev
+
+Observa arquivos `.jade` e regenera models a cada mudança.
+
+```bash
+esmeralda dev              # Watch schema/*.jade, auto-regenera
+esmeralda dev --run        # Tambem aplica migrations pendentes
+esmeralda dev -f path.jade # Observa um arquivo especifico
+```
+
 #### db pull
 
 Introspeciona o banco de dados e gera arquivos de entidade.
@@ -377,15 +408,14 @@ esmeralda db seed                   # Todos os seeds
 esmeralda db seed user              # Seed especifico
 ```
 
-#### schema-generate
+#### generate:legacy (deprecated)
 
-Gera arquivos Lua de entidade a partir de definicoes de schema declarativo.
+Caminho legado para schemas em Lua. Prefira `esmeralda generate` com `.jade`.
 
 ```bash
-esmeralda schema-generate
+esmeralda generate:legacy
 ```
 
-Le arquivos de schema declarativo e saida no formato `Jade.Entity()` Lua.
 
 ### Tratamento de Erros
 

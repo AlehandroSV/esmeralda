@@ -146,7 +146,7 @@ export function registerGenerate(program: Command): void {
           Logger.info("  - schema.lua          (Lua table format)");
           Logger.info("");
           Logger.info("Or specify explicitly:");
-          Logger.info("  esmeralda schema-generate -f path/to/schema.jade");
+          Logger.info("  esmeralda generate -f path/to/schema.jade");
           process.exit(1);
         }
 
