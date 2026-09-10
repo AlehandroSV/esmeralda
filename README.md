@@ -99,6 +99,16 @@ esmeralda migrate rollback              # Rollback last
 esmeralda migrate rollback --steps 3    # Rollback last 3
 ```
 
+#### pull (experimental)
+
+Introspects a live database and writes a declarative `.jade` schema.
+
+```bash
+esmeralda pull                 # primary → schema/models.jade
+esmeralda pull -d analytics    # multi-db → schema/analytics_models.jade
+esmeralda pull -t users        # single table
+```
+
 #### db pull
 
 Introspects the database and generates entity files.
