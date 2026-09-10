@@ -162,7 +162,7 @@ export function registerMigrate(program: Command): Command {
       await runPendingMigrations(options);
     });
 
-  // Explicit development entrypoint (Prisma-like surface)
+  // Explicit development entrypoint
   migrate
     .command("dev")
     .description("Apply pending migrations to the development database")
